@@ -35,7 +35,7 @@ export const PALETTE = [
         type: "crop",
         title: "Crop",
         subtitle: "Crop an image",
-        defaultData: () => ({ input: null, output: null, crop: null }),
+        defaultData: () => ({ input: null, output: null, ratio: "1:1" }),
       },
       {
         type: "merge",

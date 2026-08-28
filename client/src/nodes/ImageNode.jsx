@@ -1,7 +1,7 @@
 import { useRef } from "react";
 import { Handle, Position } from "@xyflow/react";
 import NodeShell from "./NodeShell.jsx";
-import { useStore } from "../lib/store.js";
+import { useStore, HANDLE_LABELS } from "../lib/store.js";
 import { fileToDataUrl } from "../lib/imageUtils.js";
 import ImagePreview from "../components/ImagePreview.jsx";
 
@@ -9,6 +9,13 @@ export default function ImageNode({ id, data, selected }) {
   const updateNodeData = useStore((s) => s.updateNodeData);
   const propagateFrom = useStore((s) => s.propagateFrom);
   const inputRef = useRef(null);
+
+  const roleBadge = useStore((s) => {
+    const outgoing = s.edges.filter((e) => e.source === id);
+    if (!outgoing.length) return "INPUT";
+    const labels = [...new Set(outgoing.map((e) => HANDLE_LABELS[e.targetHandle]).filter(Boolean))];
+    return labels.length ? labels.join(" / ") : "INPUT";
+  });
 
   async function handleFile(file) {
     if (!file) return;
@@ -19,7 +26,9 @@ export default function ImageNode({ id, data, selected }) {
   }
 
   return (
-    <NodeShell title="Image" badge="INPUT" selected={selected}>
+    <NodeShell title="Image" badge={roleBadge} selected={selected}>
+      <Handle type="target" position={Position.Left} id="img" />
+
       <ImagePreview src={data.image} alt="input" empty="No image" />
 
       <input

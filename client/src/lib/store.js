@@ -14,6 +14,20 @@ const HANDLE_TO_FIELD = {
   in1: "input1",
   in2: "input2",
   in3: "input3",
+  img: "image",
+};
+
+// Human-readable badge shown on the source node's header for each handle
+// it's currently feeding, e.g. an Image node wired into Imagine's "base"
+// input shows a "BASE" badge instead of the generic "INPUT" one.
+export const HANDLE_LABELS = {
+  base: "BASE",
+  ref: "REFERENCE",
+  in: "INPUT",
+  in1: "INPUT 1",
+  in2: "INPUT 2",
+  in3: "INPUT 3",
+  img: "LINKED",
 };
 
 const SETTINGS_KEY = "image-flow-studio:settings";
@@ -105,6 +119,43 @@ export const useStore = create((set, get) => ({
 
     // chain further downstream (e.g. Crop -> Upscale -> Merge)
     for (const edge of outgoing) get().propagateFrom(edge.target);
+  },
+
+  // After an Imagine node generates an image, drop (or update) a companion
+  // Image node right next to it, wired from its output, so the user can
+  // immediately feed the result back into another Imagine node to keep
+  // iterating.
+  linkGeneratedImage: (sourceId, image) => {
+    const { nodes, edges } = get();
+    const source = nodes.find((n) => n.id === sourceId);
+    if (!source) return;
+
+    const existingId = source.data?.linkedImageNodeId;
+    const existing = existingId && nodes.find((n) => n.id === existingId);
+
+    if (existing) {
+      get().updateNodeData(existing.id, { image });
+      get().propagateFrom(existing.id);
+      return;
+    }
+
+    const newId = nextId("image");
+    const newNode = {
+      id: newId,
+      type: "image",
+      position: { x: source.position.x + 340, y: source.position.y },
+      data: { image },
+    };
+    const newEdge = {
+      id: nextId("edge"),
+      source: sourceId,
+      sourceHandle: "out",
+      target: newId,
+      targetHandle: "img",
+    };
+
+    set({ nodes: [...get().nodes, newNode], edges: [...edges, newEdge] });
+    get().updateNodeData(sourceId, { linkedImageNodeId: newId });
   },
 
   removeNode: (id) => {

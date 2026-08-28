@@ -7,7 +7,12 @@ app.use(express.json({ limit: "50mb" }));
 
 const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
 
-// Body: { apiKey, model, prompt, images: [{ data (base64, no prefix), mimeType }], ratio, resolution }
+const ROLE_LABELS = {
+  base: "Base image",
+  reference: "Reference image",
+};
+
+// Body: { apiKey, model, prompt, images: [{ data (base64, no prefix), mimeType, role? }], ratio, resolution }
 app.post("/api/generate", async (req, res) => {
   const { apiKey, model, prompt, images = [], ratio, resolution } = req.body || {};
 
@@ -16,10 +21,15 @@ app.post("/api/generate", async (req, res) => {
 
   // The prompt sent to the model is exactly what the user typed — no
   // hardcoded text is appended to it. Ratio/resolution are passed as
-  // structured generationConfig fields instead.
+  // structured generationConfig fields instead. Each image gets its own
+  // small label part (e.g. "Base image:") so the model can tell base and
+  // reference images apart — the inlineData part itself has no filename.
   const parts = [{ text: prompt || "" }];
   for (const img of images) {
     if (img?.data && img?.mimeType) {
+      if (img.role && ROLE_LABELS[img.role]) {
+        parts.push({ text: `${ROLE_LABELS[img.role]}:` });
+      }
       parts.push({ inlineData: { mimeType: img.mimeType, data: img.data } });
     }
   }

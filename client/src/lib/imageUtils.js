@@ -31,6 +31,12 @@ function loadImage(dataUrl) {
   });
 }
 
+export function loadNaturalSize(dataUrl) {
+  return loadImage(dataUrl)
+    .then((img) => ({ w: img.naturalWidth || 1, h: img.naturalHeight || 1 }))
+    .catch(() => ({ w: 1, h: 1 }));
+}
+
 // crop: { xPct, yPct, wPct, hPct } all 0..1, relative to the source image
 export async function cropImage(dataUrl, crop) {
   const img = await loadImage(dataUrl);
