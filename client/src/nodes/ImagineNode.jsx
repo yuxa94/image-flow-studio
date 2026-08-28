@@ -3,6 +3,7 @@ import NodeShell from "./NodeShell.jsx";
 import { useStore } from "../lib/store.js";
 import { generateImage } from "../lib/api.js";
 import { dataUrlToRaw } from "../lib/imageUtils.js";
+import ImagePreview from "../components/ImagePreview.jsx";
 
 const RATIOS = ["AUTO", "1:1", "16:9", "9:16", "4:3", "3:4"];
 const RESOLUTIONS = ["AUTO", "1K", "2K", "4K"];
@@ -48,15 +49,13 @@ export default function ImagineNode({ id, data, selected }) {
       <Handle type="target" position={Position.Left} id="base" style={{ top: "30%" }} />
       <Handle type="target" position={Position.Left} id="ref" style={{ top: "70%" }} />
 
-      {data.output ? (
-        <div className="image-preview">
-          <img src={data.output} alt="output" />
-        </div>
-      ) : (
-        <div className="image-preview empty">
-          {data.baseImage ? "Ready to generate" : "Connect a base image ←"}
-        </div>
-      )}
+      <ImagePreview
+        src={data.output}
+        alt="output"
+        empty={data.baseImage ? "Ready to generate" : "Connect a base image ←"}
+        downloadable
+        filename={`imagine-${id}.png`}
+      />
 
       <label>Prompt</label>
       <textarea

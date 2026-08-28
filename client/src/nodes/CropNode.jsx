@@ -3,6 +3,7 @@ import { Handle, Position } from "@xyflow/react";
 import NodeShell from "./NodeShell.jsx";
 import { useStore } from "../lib/store.js";
 import { cropImage } from "../lib/imageUtils.js";
+import ImagePreview from "../components/ImagePreview.jsx";
 
 const DEFAULT_CROP = { xPct: 0.1, yPct: 0.1, wPct: 0.8, hPct: 0.8 };
 
@@ -91,9 +92,7 @@ export default function CropNode({ id, data, selected }) {
       <div className="hint">Drag on the image to select a crop area.</div>
 
       {data.output ? (
-        <div className="image-preview">
-          <img src={data.output} alt="cropped" />
-        </div>
+        <ImagePreview src={data.output} alt="cropped" downloadable filename={`crop-${id}.png`} />
       ) : null}
 
       {data.error ? <div className="error-text">{data.error}</div> : null}

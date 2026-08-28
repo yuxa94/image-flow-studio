@@ -14,18 +14,21 @@ app.post("/api/generate", async (req, res) => {
   if (!apiKey) return res.status(400).json({ error: "Missing API key" });
   if (!model) return res.status(400).json({ error: "Missing model name" });
 
-  let fullPrompt = prompt || "";
-  const hints = [];
-  if (ratio && ratio !== "AUTO") hints.push(`output aspect ratio ${ratio}`);
-  if (resolution && resolution !== "AUTO") hints.push(`output resolution ${resolution}`);
-  if (hints.length) fullPrompt += `\n\n(${hints.join(", ")})`;
-
-  const parts = [{ text: fullPrompt }];
+  // The prompt sent to the model is exactly what the user typed — no
+  // hardcoded text is appended to it. Ratio/resolution are passed as
+  // structured generationConfig fields instead.
+  const parts = [{ text: prompt || "" }];
   for (const img of images) {
     if (img?.data && img?.mimeType) {
       parts.push({ inlineData: { mimeType: img.mimeType, data: img.data } });
     }
   }
+
+  const generationConfig = { responseModalities: ["IMAGE", "TEXT"] };
+  const imageConfig = {};
+  if (ratio && ratio !== "AUTO") imageConfig.aspectRatio = ratio;
+  if (resolution && resolution !== "AUTO") imageConfig.imageSize = resolution;
+  if (Object.keys(imageConfig).length) generationConfig.imageConfig = imageConfig;
 
   const url = `${GEMINI_BASE}/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`;
 
@@ -35,7 +38,7 @@ app.post("/api/generate", async (req, res) => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         contents: [{ role: "user", parts }],
-        generationConfig: { responseModalities: ["IMAGE", "TEXT"] },
+        generationConfig,
       }),
     });
 

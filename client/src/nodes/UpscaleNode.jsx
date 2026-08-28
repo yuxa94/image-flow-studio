@@ -3,6 +3,7 @@ import NodeShell from "./NodeShell.jsx";
 import { useStore } from "../lib/store.js";
 import { upscaleImageCanvas, dataUrlToRaw } from "../lib/imageUtils.js";
 import { generateImage } from "../lib/api.js";
+import ImagePreview from "../components/ImagePreview.jsx";
 
 export default function UpscaleNode({ id, data, selected }) {
   const updateNodeData = useStore((s) => s.updateNodeData);
@@ -42,13 +43,7 @@ export default function UpscaleNode({ id, data, selected }) {
     <NodeShell title="Upscale" badge="4K" selected={selected}>
       <Handle type="target" position={Position.Left} id="in" />
 
-      {data.input ? (
-        <div className="image-preview">
-          <img src={data.input} alt="input" />
-        </div>
-      ) : (
-        <div className="image-preview empty">Connect an image ←</div>
-      )}
+      <ImagePreview src={data.input} alt="input" empty="Connect an image ←" />
 
       <div className="row">
         <div>
@@ -75,9 +70,7 @@ export default function UpscaleNode({ id, data, selected }) {
       </div>
 
       {data.output ? (
-        <div className="image-preview">
-          <img src={data.output} alt="upscaled" />
-        </div>
+        <ImagePreview src={data.output} alt="upscaled" downloadable filename={`upscale-${id}.png`} />
       ) : null}
 
       {data.error ? <div className="error-text">{data.error}</div> : null}

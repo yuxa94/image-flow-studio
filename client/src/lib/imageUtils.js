@@ -13,6 +13,15 @@ export function dataUrlToRaw(dataUrl) {
   return { mimeType: match[1], data: match[2] };
 }
 
+export function downloadDataUrl(dataUrl, filename) {
+  const a = document.createElement("a");
+  a.href = dataUrl;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
+
 function loadImage(dataUrl) {
   return new Promise((resolve, reject) => {
     const img = new Image();

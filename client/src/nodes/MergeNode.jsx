@@ -2,6 +2,7 @@ import { Handle, Position } from "@xyflow/react";
 import NodeShell from "./NodeShell.jsx";
 import { useStore } from "../lib/store.js";
 import { mergeImages } from "../lib/imageUtils.js";
+import ImagePreview from "../components/ImagePreview.jsx";
 
 const SLOTS = [
   { field: "input1", handle: "in1", opacityField: "opacity1", top: "20%" },
@@ -42,9 +43,7 @@ export default function MergeNode({ id, data, selected }) {
             {s.field} {data[s.field] ? "" : "(empty)"}
           </label>
           {data[s.field] ? (
-            <div className="image-preview" style={{ aspectRatio: "16/6" }}>
-              <img src={data[s.field]} alt={s.field} />
-            </div>
+            <ImagePreview src={data[s.field]} alt={s.field} style={{ aspectRatio: "16/6" }} />
           ) : null}
           {data[s.field] ? (
             <input
@@ -60,9 +59,7 @@ export default function MergeNode({ id, data, selected }) {
       ))}
 
       {data.output ? (
-        <div className="image-preview">
-          <img src={data.output} alt="merged" />
-        </div>
+        <ImagePreview src={data.output} alt="merged" downloadable filename={`merge-${id}.png`} />
       ) : null}
 
       {data.error ? <div className="error-text">{data.error}</div> : null}

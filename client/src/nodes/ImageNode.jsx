@@ -3,6 +3,7 @@ import { Handle, Position } from "@xyflow/react";
 import NodeShell from "./NodeShell.jsx";
 import { useStore } from "../lib/store.js";
 import { fileToDataUrl } from "../lib/imageUtils.js";
+import ImagePreview from "../components/ImagePreview.jsx";
 
 export default function ImageNode({ id, data, selected }) {
   const updateNodeData = useStore((s) => s.updateNodeData);
@@ -19,13 +20,7 @@ export default function ImageNode({ id, data, selected }) {
 
   return (
     <NodeShell title="Image" badge="INPUT" selected={selected}>
-      {data.image ? (
-        <div className="image-preview">
-          <img src={data.image} alt="input" />
-        </div>
-      ) : (
-        <div className="image-preview empty">No image</div>
-      )}
+      <ImagePreview src={data.image} alt="input" empty="No image" />
 
       <input
         ref={inputRef}

@@ -37,6 +37,10 @@ export const useStore = create((set, get) => ({
   settings: loadSettings(),
   nodes: [],
   edges: [],
+  lightboxImage: null,
+
+  openLightbox: (image) => set({ lightboxImage: image }),
+  closeLightbox: () => set({ lightboxImage: null }),
 
   setSettings: (patch) => {
     const next = { ...get().settings, ...patch };

@@ -10,6 +10,7 @@ import {
 import { useStore, nextId } from "./lib/store.js";
 import { PALETTE } from "./nodeConfig.js";
 import SettingsPanel from "./SettingsPanel.jsx";
+import Lightbox from "./components/Lightbox.jsx";
 
 import ImageNode from "./nodes/ImageNode.jsx";
 import ImagineNode from "./nodes/ImagineNode.jsx";
@@ -113,6 +114,7 @@ export default function App() {
       <ReactFlowProvider>
         <Canvas />
       </ReactFlowProvider>
+      <Lightbox />
     </div>
   );
 }
