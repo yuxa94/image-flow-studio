@@ -61,8 +61,10 @@ export default function ImagineNode({ id, data, selected }) {
 
   return (
     <NodeShell title="Imagine" badge="GEMINI" selected={selected}>
-      <Handle type="target" position={Position.Left} id="base" style={{ top: "30%" }} />
-      <Handle type="target" position={Position.Left} id="ref" style={{ top: "70%" }} />
+      <div className="handle-row">
+        <Handle type="target" position={Position.Left} id="base" />
+        <span className="handle-row-label">Base</span>
+      </div>
 
       <ImagePreview
         src={data.output}
@@ -71,6 +73,12 @@ export default function ImagineNode({ id, data, selected }) {
         downloadable
         filename={`imagine-${id}.png`}
       />
+
+      <div className="handle-row">
+        <Handle type="target" position={Position.Left} id="ref" />
+        <span className="handle-row-label">Reference (optional)</span>
+      </div>
+      <ImagePreview src={data.refImage} alt="reference" empty="Connect a reference image ←" />
 
       <button
         className="btn secondary node-footer-btn"

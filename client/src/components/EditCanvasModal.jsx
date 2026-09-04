@@ -236,6 +236,7 @@ export default function EditCanvasModal({ baseSrc, initialPrompt, initialRefImag
               </button>
             </div>
 
+            <div className="editcanvas-stage">
             <div
               className="editcanvas-canvas"
               ref={containerRef}
@@ -300,6 +301,7 @@ export default function EditCanvasModal({ baseSrc, initialPrompt, initialRefImag
                   />
                 ) : null}
               </svg>
+            </div>
             </div>
           </div>
 
