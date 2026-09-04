@@ -37,6 +37,90 @@ function composeMatrix(Cesium, position, heading, pitch, roll) {
 
 let modelCounter = 1;
 
+// --- Gumball gizmo geometry/math ------------------------------------------
+// Rhino-style gumball: a translate arrow + rotation ring per axis, world
+// East/North/Up aligned (not re-oriented to the model's current rotation —
+// simpler, and lets you always nudge heading/pitch/roll independently).
+const GIZMO_SEGMENTS = 64;
+const GIZMO_AXIS_COLOR = { east: "#ff4d4d", north: "#3ddc63", up: "#3d8bff" };
+// Which plane each rotation ring lies in, and which axis's color it borrows.
+const GIZMO_RING_AXIS = {
+  heading: { normal: "up", a: "east", b: "north" },
+  pitch: { normal: "east", a: "north", b: "up" },
+  roll: { normal: "north", a: "east", b: "up" },
+};
+
+function enuBasis(Cesium, center) {
+  const m = Cesium.Transforms.eastNorthUpToFixedFrame(center);
+  const col = (i) => {
+    const c = Cesium.Matrix4.getColumn(m, i, new Cesium.Cartesian4());
+    return new Cesium.Cartesian3(c.x, c.y, c.z);
+  };
+  return { east: col(0), north: col(1), up: col(2) };
+}
+
+// model.boundingSphere is a getter that can throw (not just return
+// undefined) if accessed before VWorld's bundled Cesium considers the
+// model fully ready — fall back to the placement point when that happens.
+function modelCenterAndRadius(Cesium, model) {
+  try {
+    if (model.primitive.ready) {
+      const bs = model.primitive.boundingSphere;
+      if (bs) return { center: Cesium.Cartesian3.clone(bs.center), radius: bs.radius || 30 };
+    }
+  } catch {
+    // not ready yet — use the placement point below
+  }
+  return { center: Cesium.Cartesian3.clone(model.position), radius: 30 };
+}
+
+function addScaled(Cesium, base, dir, scalar) {
+  return Cesium.Cartesian3.add(base, Cesium.Cartesian3.multiplyByScalar(dir, scalar, new Cesium.Cartesian3()), new Cesium.Cartesian3());
+}
+
+function circlePoints(Cesium, center, basisA, basisB, radius) {
+  const pts = [];
+  for (let i = 0; i <= GIZMO_SEGMENTS; i++) {
+    const t = (i / GIZMO_SEGMENTS) * Math.PI * 2;
+    const offset = Cesium.Cartesian3.add(
+      Cesium.Cartesian3.multiplyByScalar(basisA, radius * Math.cos(t), new Cesium.Cartesian3()),
+      Cesium.Cartesian3.multiplyByScalar(basisB, radius * Math.sin(t), new Cesium.Cartesian3()),
+      new Cesium.Cartesian3()
+    );
+    pts.push(Cesium.Cartesian3.add(center, offset, new Cesium.Cartesian3()));
+  }
+  return pts;
+}
+
+// Closest point (as scalar distance along axisDir from axisOrigin) between
+// the gizmo's axis line and the camera's pick ray — the standard way to
+// turn a 2D drag into "move along this 3D line".
+function closestTOnAxis(Cesium, axisOrigin, axisDir, rayOrigin, rayDir) {
+  const r = Cesium.Cartesian3.subtract(axisOrigin, rayOrigin, new Cesium.Cartesian3());
+  const a = Cesium.Cartesian3.dot(axisDir, axisDir);
+  const b = Cesium.Cartesian3.dot(axisDir, rayDir);
+  const c = Cesium.Cartesian3.dot(rayDir, rayDir);
+  const d = Cesium.Cartesian3.dot(axisDir, r);
+  const e = Cesium.Cartesian3.dot(rayDir, r);
+  const denom = a * c - b * b;
+  if (Math.abs(denom) < 1e-9) return 0;
+  return (b * e - c * d) / denom;
+}
+
+// Angle (radians) of where the pick ray crosses the plane through `center`
+// with the given normal, measured from basisA toward basisB.
+function angleOnPlane(Cesium, center, normal, basisA, basisB, rayOrigin, rayDir) {
+  const denom = Cesium.Cartesian3.dot(rayDir, normal);
+  if (Math.abs(denom) < 1e-9) return null;
+  const t = Cesium.Cartesian3.dot(Cesium.Cartesian3.subtract(center, rayOrigin, new Cesium.Cartesian3()), normal) / denom;
+  if (t < 0) return null;
+  const hit = addScaled(Cesium, rayOrigin, rayDir, t);
+  const v = Cesium.Cartesian3.subtract(hit, center, new Cesium.Cartesian3());
+  const x = Cesium.Cartesian3.dot(v, basisA);
+  const y = Cesium.Cartesian3.dot(v, basisB);
+  return Math.atan2(y, x);
+}
+
 // This modal is mounted exactly once at the App level and never unmounted —
 // VWorld's SDK defines window.ws3d.viewer as a non-redefinable property, so
 // re-running new vw.Map()/start() after a React unmount+remount throws
@@ -68,9 +152,22 @@ export default function VWorldMapModal() {
   const cesiumRef = useRef(null);
   const clickHandlerRef = useRef(null);
   const fileInputRef = useRef(null);
+  const outlineStageRef = useRef(null);
+  const gizmoRef = useRef(null); // { modelId, entities: { [key]: Entity } }
+  const gizmoHandlerRef = useRef(null);
+  const dragRef = useRef(null);
+  const modelsRef = useRef(models);
+  const selectedModelIdRef = useRef(selectedModelId);
 
   const ratioOption = RATIO_OPTIONS.find((r) => r.label === ratioLabel) || RATIO_OPTIONS[0];
   const selectedModel = models.find((m) => m.id === selectedModelId) || null;
+
+  useEffect(() => {
+    modelsRef.current = models;
+  }, [models]);
+  useEffect(() => {
+    selectedModelIdRef.current = selectedModelId;
+  }, [selectedModelId]);
 
   // Runs exactly once for the lifetime of the app (this component is never
   // unmounted), which is required by the SDK's singleton viewer.
@@ -107,6 +204,28 @@ export default function VWorldMapModal() {
           if (window.ws3d?.viewer && window.Cesium) {
             viewerRef.current = window.ws3d.viewer;
             cesiumRef.current = window.Cesium;
+
+            // Yellow silhouette on the selected model. Guarded on a window
+            // flag (not just a local ref) for the same StrictMode-double-
+            // mount reason as the viewer init above — adding this twice
+            // would draw two overlapping outlines.
+            try {
+              if (!window.__vworldOutline) {
+                const Cesium = window.Cesium;
+                const viewer = window.ws3d.viewer;
+                const edgeDetection = Cesium.PostProcessStageLibrary.createEdgeDetectionStage();
+                edgeDetection.uniforms.color = Cesium.Color.fromCssColorString("#ffe600");
+                edgeDetection.uniforms.length = 0.02;
+                edgeDetection.selected = [];
+                const silhouette = Cesium.PostProcessStageLibrary.createSilhouetteStage([edgeDetection]);
+                viewer.scene.postProcessStages.add(silhouette);
+                window.__vworldOutline = edgeDetection;
+              }
+              outlineStageRef.current = window.__vworldOutline;
+            } catch (e) {
+              console.warn("VWorld: silhouette outline unavailable", e);
+            }
+
             setStatus("ready");
           } else if (attempts < 100) {
             setTimeout(() => waitForViewer(attempts + 1), 100);
@@ -182,6 +301,182 @@ export default function VWorldMapModal() {
       handler.destroy();
     };
   }, [pendingAction]);
+
+  // Builds (or, for an already-built gizmo on the same model, repositions
+  // in place) the gumball arrows/rings for the selected model, and keeps
+  // the silhouette outline in sync with the current selection.
+  useEffect(() => {
+    const viewer = viewerRef.current;
+    const Cesium = cesiumRef.current;
+    if (!viewer || !Cesium) return;
+
+    const model = models.find((m) => m.id === selectedModelId);
+
+    if (!model) {
+      if (gizmoRef.current) {
+        Object.values(gizmoRef.current.entities).forEach((e) => viewer.entities.remove(e));
+        gizmoRef.current = null;
+      }
+      if (outlineStageRef.current) outlineStageRef.current.selected = [];
+      return;
+    }
+
+    const { center, radius } = modelCenterAndRadius(Cesium, model);
+    const armLength = radius * 1.8;
+    const basis = enuBasis(Cesium, center);
+    const dirs = { east: basis.east, north: basis.north, up: basis.up };
+
+    const arrowGeom = {};
+    for (const axis of ["east", "north", "up"]) {
+      arrowGeom[axis] = { shaft: [center, addScaled(Cesium, center, dirs[axis], armLength)], tip: addScaled(Cesium, center, dirs[axis], armLength) };
+    }
+    const ringGeom = {};
+    for (const key of Object.keys(GIZMO_RING_AXIS)) {
+      const { a, b } = GIZMO_RING_AXIS[key];
+      ringGeom[key] = circlePoints(Cesium, center, dirs[a], dirs[b], armLength * 0.8);
+    }
+
+    if (!gizmoRef.current || gizmoRef.current.modelId !== model.id) {
+      if (gizmoRef.current) {
+        Object.values(gizmoRef.current.entities).forEach((e) => viewer.entities.remove(e));
+      }
+      const entities = {};
+      for (const axis of ["east", "north", "up"]) {
+        const color = Cesium.Color.fromCssColorString(GIZMO_AXIS_COLOR[axis]);
+        const shaft = viewer.entities.add({
+          polyline: { positions: arrowGeom[axis].shaft, width: 6, material: color, clampToGround: false },
+        });
+        shaft.gizmoPart = { type: "translate", axis };
+        const tip = viewer.entities.add({
+          position: arrowGeom[axis].tip,
+          point: {
+            pixelSize: 14,
+            color,
+            outlineColor: Cesium.Color.WHITE,
+            outlineWidth: 1,
+            disableDepthTestDistance: Number.POSITIVE_INFINITY,
+          },
+        });
+        tip.gizmoPart = { type: "translate", axis };
+        entities[`arrow_${axis}_shaft`] = shaft;
+        entities[`arrow_${axis}_tip`] = tip;
+      }
+      for (const key of Object.keys(GIZMO_RING_AXIS)) {
+        const color = Cesium.Color.fromCssColorString(GIZMO_AXIS_COLOR[GIZMO_RING_AXIS[key].normal]);
+        const ring = viewer.entities.add({
+          polyline: { positions: ringGeom[key], width: 4, material: color, clampToGround: false },
+        });
+        ring.gizmoPart = { type: "rotate", axis: key };
+        entities[`ring_${key}`] = ring;
+      }
+      gizmoRef.current = { modelId: model.id, entities };
+    } else {
+      const e = gizmoRef.current.entities;
+      for (const axis of ["east", "north", "up"]) {
+        e[`arrow_${axis}_shaft`].polyline.positions = arrowGeom[axis].shaft;
+        e[`arrow_${axis}_tip`].position = arrowGeom[axis].tip;
+      }
+      for (const key of Object.keys(GIZMO_RING_AXIS)) {
+        e[`ring_${key}`].polyline.positions = ringGeom[key];
+      }
+    }
+
+    if (outlineStageRef.current) outlineStageRef.current.selected = [model.primitive];
+  }, [selectedModelId, models]);
+
+  // Drag-to-translate (arrows) / drag-to-rotate (rings) on the gumball.
+  useEffect(() => {
+    const viewer = viewerRef.current;
+    const Cesium = cesiumRef.current;
+    if (!viewer || !Cesium) return;
+
+    if (gizmoHandlerRef.current) {
+      gizmoHandlerRef.current.destroy();
+      gizmoHandlerRef.current = null;
+    }
+    if (!selectedModelId) return;
+
+    const handler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
+    const controller = viewer.scene.screenSpaceCameraController;
+
+    handler.setInputAction((movement) => {
+      const picked = viewer.scene.pick(movement.position);
+      const part = picked?.id?.gizmoPart;
+      if (!part) return;
+
+      const model = modelsRef.current.find((m) => m.id === selectedModelIdRef.current);
+      if (!model) return;
+
+      const { center } = modelCenterAndRadius(Cesium, model);
+      const basis = enuBasis(Cesium, center);
+      const ray = viewer.camera.getPickRay(movement.position);
+      if (!ray) return;
+
+      controller.enableInputs = false;
+
+      if (part.type === "translate") {
+        const axisDir = basis[part.axis];
+        const startT = closestTOnAxis(Cesium, center, axisDir, ray.origin, ray.direction);
+        dragRef.current = { type: "translate", axisDir, center, startT, startPosition: Cesium.Cartesian3.clone(model.position) };
+      } else {
+        const { normal, a, b } = GIZMO_RING_AXIS[part.axis];
+        const startAngle = angleOnPlane(Cesium, center, basis[normal], basis[a], basis[b], ray.origin, ray.direction);
+        if (startAngle == null) return;
+        dragRef.current = {
+          type: "rotate",
+          axis: part.axis,
+          center,
+          normal: basis[normal],
+          a: basis[a],
+          b: basis[b],
+          startAngle,
+          startHeading: model.heading,
+          startPitch: model.pitch,
+          startRoll: model.roll,
+        };
+      }
+    }, Cesium.ScreenSpaceEventType.LEFT_DOWN);
+
+    handler.setInputAction((movement) => {
+      const drag = dragRef.current;
+      if (!drag) return;
+      const model = modelsRef.current.find((m) => m.id === selectedModelIdRef.current);
+      if (!model) return;
+      const ray = viewer.camera.getPickRay(movement.endPosition);
+      if (!ray) return;
+
+      if (drag.type === "translate") {
+        const t = closestTOnAxis(Cesium, drag.center, drag.axisDir, ray.origin, ray.direction);
+        const newPosition = addScaled(Cesium, drag.startPosition, drag.axisDir, t - drag.startT);
+        model.primitive.modelMatrix = composeMatrix(Cesium, newPosition, model.heading, model.pitch, model.roll);
+        setModels((prev) => prev.map((m) => (m.id === model.id ? { ...m, position: newPosition } : m)));
+      } else {
+        const angle = angleOnPlane(Cesium, drag.center, drag.normal, drag.a, drag.b, ray.origin, ray.direction);
+        if (angle == null) return;
+        const delta = angle - drag.startAngle;
+        const patch = {};
+        if (drag.axis === "heading") patch.heading = drag.startHeading + delta;
+        if (drag.axis === "pitch") patch.pitch = drag.startPitch + delta;
+        if (drag.axis === "roll") patch.roll = drag.startRoll + delta;
+        const next = { ...model, ...patch };
+        model.primitive.modelMatrix = composeMatrix(Cesium, next.position, next.heading, next.pitch, next.roll);
+        setModels((prev) => prev.map((m) => (m.id === model.id ? next : m)));
+      }
+    }, Cesium.ScreenSpaceEventType.MOUSE_MOVE);
+
+    handler.setInputAction(() => {
+      if (dragRef.current) {
+        dragRef.current = null;
+        controller.enableInputs = true;
+      }
+    }, Cesium.ScreenSpaceEventType.LEFT_UP);
+
+    gizmoHandlerRef.current = handler;
+    return () => {
+      handler.destroy();
+      if (controller) controller.enableInputs = true;
+    };
+  }, [selectedModelId]);
 
   // Cesium sizes its canvas off window 'resize' events, which don't fire
   // when this modal's container goes from display:none back to visible —
@@ -353,7 +648,7 @@ export default function VWorldMapModal() {
                   <div
                     className={`layer-row vworld-model-row${m.id === selectedModelId ? " selected" : ""}`}
                     key={m.id}
-                    onClick={() => setSelectedModelId(m.id)}
+                    onClick={() => setSelectedModelId((prev) => (prev === m.id ? null : m.id))}
                   >
                     <span className="layer-name">{m.name}</span>
                     <button
