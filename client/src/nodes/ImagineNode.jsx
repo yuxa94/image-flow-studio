@@ -6,8 +6,9 @@ import { generateImage } from "../lib/api.js";
 import { dataUrlToRaw } from "../lib/imageUtils.js";
 import ImagePreview from "../components/ImagePreview.jsx";
 import EditCanvasModal from "../components/EditCanvasModal.jsx";
+import { ASPECT_RATIO_LABELS } from "../lib/ratios.js";
 
-const RATIOS = ["AUTO", "1:1", "16:9", "9:16", "4:3", "3:4"];
+const RATIOS = ["AUTO", ...ASPECT_RATIO_LABELS];
 const RESOLUTIONS = ["AUTO", "1K", "2K", "4K"];
 
 export default function ImagineNode({ id, data, selected }) {

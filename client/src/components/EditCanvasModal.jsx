@@ -8,6 +8,7 @@ export default function EditCanvasModal({ baseSrc, initialPrompt, initialRefImag
   const [natural, setNatural] = useState({ w: 1, h: 1 });
   const [tool, setTool] = useState("rect");
   const [color, setColor] = useState(COLORS[0]);
+  const [strokeWidth, setStrokeWidth] = useState(4);
   const [shapes, setShapes] = useState([]);
   const [drawing, setDrawing] = useState(null);
   const [undoStack, setUndoStack] = useState([]);
@@ -49,9 +50,9 @@ export default function EditCanvasModal({ baseSrc, initialPrompt, initialRefImag
     const p = pointFromEvent(e);
     const id = `s${shapeCounter.current++}`;
     if (tool === "rect") {
-      setDrawing({ id, type: "rect", color, x: p.x, y: p.y, w: 0, h: 0 });
+      setDrawing({ id, type: "rect", color, width: strokeWidth, x: p.x, y: p.y, w: 0, h: 0 });
     } else {
-      setDrawing({ id, type: "path", color, points: [p] });
+      setDrawing({ id, type: "path", color, width: strokeWidth, points: [p] });
     }
   }
 
@@ -77,7 +78,7 @@ export default function EditCanvasModal({ baseSrc, initialPrompt, initialRefImag
         setDrawing(null);
         return;
       }
-      finalShape = { id: drawing.id, type: "rect", color: drawing.color, x, y, w, h };
+      finalShape = { id: drawing.id, type: "rect", color: drawing.color, width: drawing.width, x, y, w, h };
     } else if (drawing.points.length < 2) {
       setDrawing(null);
       return;
@@ -136,10 +137,15 @@ export default function EditCanvasModal({ baseSrc, initialPrompt, initialRefImag
     });
     ctx.drawImage(img, 0, 0, natural.w, natural.h);
 
+    // shapes were drawn at the on-screen container size, in CSS pixels —
+    // scale their stroke width up to the natural resolution being exported.
+    const displayedWidth = containerRef.current?.getBoundingClientRect().width || natural.w;
+    const scale = natural.w / displayedWidth;
+
     for (const shape of shapes) {
       if (!shape.visible) continue;
       ctx.strokeStyle = shape.color;
-      ctx.lineWidth = Math.max(2, natural.w * 0.004);
+      ctx.lineWidth = (shape.width || 4) * scale;
       if (shape.type === "rect") {
         ctx.strokeRect(shape.x * natural.w, shape.y * natural.h, shape.w * natural.w, shape.h * natural.h);
       } else if (shape.type === "path" && shape.points.length > 1) {
@@ -208,6 +214,17 @@ export default function EditCanvasModal({ baseSrc, initialPrompt, initialRefImag
                 />
               ))}
               <span className="toolbar-sep" />
+              <label className="toolbar-width">
+                <span>{strokeWidth}px</span>
+                <input
+                  type="range"
+                  min="1"
+                  max="20"
+                  value={strokeWidth}
+                  onChange={(e) => setStrokeWidth(Number(e.target.value))}
+                />
+              </label>
+              <span className="toolbar-sep" />
               <button onClick={undo} disabled={!undoStack.length} title="Undo">
                 ↩
               </button>
@@ -242,7 +259,7 @@ export default function EditCanvasModal({ baseSrc, initialPrompt, initialRefImag
                         height={s.h * 100}
                         fill="none"
                         stroke={s.color}
-                        strokeWidth={0.4}
+                        strokeWidth={s.width || 4}
                         vectorEffect="non-scaling-stroke"
                       />
                     ) : (
@@ -251,7 +268,7 @@ export default function EditCanvasModal({ baseSrc, initialPrompt, initialRefImag
                         points={s.points.map((p) => `${p.x * 100},${p.y * 100}`).join(" ")}
                         fill="none"
                         stroke={s.color}
-                        strokeWidth={0.6}
+                        strokeWidth={s.width || 4}
                         strokeLinecap="round"
                         strokeLinejoin="round"
                         vectorEffect="non-scaling-stroke"
@@ -267,7 +284,7 @@ export default function EditCanvasModal({ baseSrc, initialPrompt, initialRefImag
                     fill="none"
                     stroke={drawing.color}
                     strokeDasharray="2 1"
-                    strokeWidth={0.4}
+                    strokeWidth={drawing.width || 4}
                     vectorEffect="non-scaling-stroke"
                   />
                 ) : null}
@@ -276,7 +293,7 @@ export default function EditCanvasModal({ baseSrc, initialPrompt, initialRefImag
                     points={drawing.points.map((p) => `${p.x * 100},${p.y * 100}`).join(" ")}
                     fill="none"
                     stroke={drawing.color}
-                    strokeWidth={0.6}
+                    strokeWidth={drawing.width || 4}
                     strokeLinecap="round"
                     strokeLinejoin="round"
                     vectorEffect="non-scaling-stroke"

@@ -111,6 +111,25 @@ button {
   border-color: var(--accent);
 }
 
+/* Bigger hit target for connection handles — the visible dot stays small
+   but a transparent halo around it is also clickable/draggable. */
+.react-flow__handle {
+  width: 10px;
+  height: 10px;
+  background: var(--accent);
+  border: 2px solid var(--panel);
+}
+
+.react-flow__handle::after {
+  content: "";
+  position: absolute;
+  inset: -10px;
+}
+
+.react-flow__handle:hover {
+  background: #fff;
+}
+
 .rf-node-header {
   display: flex;
   align-items: center;
@@ -404,6 +423,22 @@ button {
   height: 20px;
   background: var(--border);
   margin: 0 4px;
+}
+
+.toolbar-width {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.toolbar-width span {
+  min-width: 30px;
+}
+
+.toolbar-width input[type="range"] {
+  width: 80px;
 }
 
 .editcanvas-canvas {
