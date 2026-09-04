@@ -156,10 +156,13 @@ export default function VWorldMapModal() {
   const [capturing, setCapturing] = useState(false);
   const [showCadastral, setShowCadastral] = useState(false);
   const [cadastralTooFar, setCadastralTooFar] = useState(false);
+  const [showBuildings, setShowBuildings] = useState(true);
+  const [showBuildingNames, setShowBuildingNames] = useState(true);
 
   const mapContainerRef = useRef(null);
   const stageRef = useRef(null);
   const viewerRef = useRef(null);
+  const mapRef = useRef(null); // the vw.Map wrapper instance — has getLayerElement, unlike viewer/viewer.map
   const cesiumRef = useRef(null);
   const clickHandlerRef = useRef(null);
   const fileInputRef = useRef(null);
@@ -212,6 +215,12 @@ export default function VWorldMapModal() {
             navigation: false,
           });
           map.start();
+          // The vw.Map wrapper instance (distinct from window.ws3d.viewer,
+          // the raw Cesium Viewer, and from viewer.map, an internal
+          // scene-element manager without getLayerElement) — stash it on
+          // window for the same StrictMode-remount-reuse reason as
+          // window.ws3d.viewer itself.
+          window.__vworldMapInstance = map;
         }
 
         // window.ws3d.viewer is the live Cesium Viewer once the map starts.
@@ -219,6 +228,7 @@ export default function VWorldMapModal() {
           if (cancelled) return;
           if (window.ws3d?.viewer && window.Cesium) {
             viewerRef.current = window.ws3d.viewer;
+            mapRef.current = window.__vworldMapInstance || null;
             cesiumRef.current = window.Cesium;
 
             // Yellow silhouette on the selected model. Guarded on a window
@@ -655,6 +665,47 @@ export default function VWorldMapModal() {
     viewer.scene.requestRender();
   }
 
+  // 3D building visibility, via the vw.Map instance's own layer registry —
+  // confirmed working directly (unlike facility_build_text/label, which
+  // don't exist in this SDK build): map.getLayerElement('facility_build')
+  // returns the live 3D building tileset layer, with real show()/hide().
+  function toggleBuildings(next) {
+    setShowBuildings(next);
+    const map = mapRef.current;
+    const viewer = viewerRef.current;
+    if (!map || !viewer) return;
+    try {
+      const layer = map.getLayerElement("facility_build");
+      if (layer) next ? layer.show() : layer.hide();
+    } catch (e) {
+      console.warn("VWorld: facility_build layer unavailable", e);
+    }
+    viewer.scene.requestRender();
+  }
+
+  // Building/place-name text labels — turns out these ARE reachable through
+  // the public SDK after all (earlier testing over unlabeled office towers
+  // gave a false negative). poi_base/poi_bound are the layers that actually
+  // carry named POI content (apartment complex names, 동 names, etc.);
+  // facility_build_text/facility_build_label/label don't exist in this SDK
+  // build and are skipped silently if a future version adds them.
+  const BUILDING_NAME_LAYERS = ["poi_base", "poi_bound", "facility_build_text", "facility_build_label", "label"];
+  function toggleBuildingNames(next) {
+    setShowBuildingNames(next);
+    const map = mapRef.current;
+    const viewer = viewerRef.current;
+    if (!map || !viewer) return;
+    for (const name of BUILDING_NAME_LAYERS) {
+      try {
+        const layer = map.getLayerElement(name);
+        if (layer) next ? layer.show() : layer.hide();
+      } catch {
+        // not present in this SDK build — skip
+      }
+    }
+    viewer.scene.requestRender();
+  }
+
   async function handleSearch() {
     if (!searchQuery.trim()) return;
     setSearching(true);
@@ -870,6 +921,24 @@ export default function VWorldMapModal() {
                 <div className="layers-title" style={{ marginTop: 16 }}>
                   Map layers
                 </div>
+                <label className="vworld-toggle">
+                  <input
+                    type="checkbox"
+                    checked={showBuildings}
+                    onChange={(e) => toggleBuildings(e.target.checked)}
+                    disabled={status !== "ready"}
+                  />
+                  3D buildings
+                </label>
+                <label className="vworld-toggle">
+                  <input
+                    type="checkbox"
+                    checked={showBuildingNames}
+                    onChange={(e) => toggleBuildingNames(e.target.checked)}
+                    disabled={status !== "ready"}
+                  />
+                  Building names
+                </label>
                 <label className="vworld-toggle">
                   <input
                     type="checkbox"

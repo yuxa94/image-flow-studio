@@ -45,21 +45,21 @@ REPLICATE_API_TOKEN=
   address or pan/zoom manually, place `.glb` models by clicking the globe
   (each gets a black CAD-style edge outline, a yellow selection silhouette,
   and a Rhino-Gumball-style move/rotate gizmo centered on it), toggle the
-  cadastral map (지적도, proxied through the server since VWorld's WMS has
-  no CORS headers), and Capture writes the screenshot as this node's
-  output at any of the same ratio presets Crop/Imagine use.
+  cadastral map (지적도, proxied through the server since WMS has no CORS
+  headers), the 3D buildings themselves, and building/place-name text
+  labels, and Capture writes the screenshot as this node's output at any
+  of the same ratio presets Crop/Imagine use.
   The cadastral layer only renders close to the ground — VWorld's own WMS
   server enforces this (verified directly: it returns a real tile for a
   small bbox but a blank 200 OK for a wide one), so it's a server-side
   scale limit we can't override; the app shows a hint instead of just
   leaving it looking broken once the camera climbs too high.
-  Building-name/POI label visibility isn't exposed anywhere in VWorld's
-  public SDK — confirmed by inspecting VWorld's own site, where it turns
-  out to be a completely separate, undocumented internal tile service
-  (`cdn.vworld.kr/TDServer/.../POI_BOUND/*.vctr`, a proprietary binary
-  format on a different host than the public API/SDK) baked into their own
-  page, not reachable through `window.vw`/`window.ws3d` — no toggle for it
-  exists here.
+  Buildings and building names are both toggled through the `vw.Map`
+  instance's own `getLayerElement(name)` registry (`facility_build` for
+  the 3D tileset; `poi_base`/`poi_bound` for named-POI text like apartment
+  complex names) — confirmed by hiding/showing each and watching the
+  effect live, at a location with actual named POIs (an unlabeled office
+  block gives a false negative here, since there's nothing to hide).
 - **Imagine** — the Gemini node. Connect a base image (required) and
   optionally a reference image, write a prompt, pick ratio/resolution, hit
   Generate. The "Edit" button opens a canvas to mark up the image
