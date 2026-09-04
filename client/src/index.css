@@ -842,6 +842,33 @@ input.node-input {
   gap: 8px;
 }
 
+.vworld-side label {
+  font-size: 10px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.vworld-model-row {
+  cursor: pointer;
+  border: 1px solid transparent;
+}
+
+.vworld-model-row.selected {
+  border-color: var(--accent);
+  background: var(--panel-2);
+}
+
+.vworld-transform {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel-2);
+}
+
 .vworld-stage {
   position: relative;
   min-width: 0;

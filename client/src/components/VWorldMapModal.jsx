@@ -12,6 +12,9 @@ const DEFAULT_LON = 127.027619;
 const DEFAULT_LAT = 37.497926;
 const DEFAULT_ALT = 1500;
 
+const toDeg = (rad) => (rad * 180) / Math.PI;
+const toRad = (deg) => (deg * Math.PI) / 180;
+
 function fitBoxForRatio(ratio, containerW, containerH) {
   if (!ratio) return { xPct: 0, yPct: 0, wPct: 1, hPct: 1 };
   let w = containerH * ratio;
@@ -26,6 +29,10 @@ function fitBoxForRatio(ratio, containerW, containerH) {
     wPct: w / containerW,
     hPct: h / containerH,
   };
+}
+
+function composeMatrix(Cesium, position, heading, pitch, roll) {
+  return Cesium.Transforms.headingPitchRollToFixedFrame(position, new Cesium.HeadingPitchRoll(heading, pitch, roll));
 }
 
 let modelCounter = 1;
@@ -43,9 +50,12 @@ export default function VWorldMapModal() {
 
   const [status, setStatus] = useState("loading"); // loading | ready | error
   const [error, setError] = useState(null);
-  const [models, setModels] = useState([]); // { id, name, primitive }
-  const [placing, setPlacing] = useState(null); // { name, url } while waiting for a map click
+  const [models, setModels] = useState([]); // { id, name, primitive, position, heading, pitch, roll, scale }
+  const [selectedModelId, setSelectedModelId] = useState(null);
+  // { type: 'place', name, url } | { type: 'move', modelId } — waiting for a map click
+  const [pendingAction, setPendingAction] = useState(null);
   const [fov, setFov] = useState(60);
+  const [screenshotMode, setScreenshotMode] = useState(false);
   const [ratioLabel, setRatioLabel] = useState("16:9");
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState([]);
@@ -60,6 +70,7 @@ export default function VWorldMapModal() {
   const fileInputRef = useRef(null);
 
   const ratioOption = RATIO_OPTIONS.find((r) => r.label === ratioLabel) || RATIO_OPTIONS[0];
+  const selectedModel = models.find((m) => m.id === selectedModelId) || null;
 
   // Runs exactly once for the lifetime of the app (this component is never
   // unmounted), which is required by the SDK's singleton viewer.
@@ -109,7 +120,7 @@ export default function VWorldMapModal() {
     };
   }, []);
 
-  // Click-to-place a pending model on the globe.
+  // Click-to-place a new model, or click-to-reposition an existing one.
   useEffect(() => {
     const viewer = viewerRef.current;
     const Cesium = cesiumRef.current;
@@ -119,28 +130,41 @@ export default function VWorldMapModal() {
       clickHandlerRef.current.destroy();
       clickHandlerRef.current = null;
     }
-    if (!placing) return;
+    if (!pendingAction) return;
 
     const handler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
     handler.setInputAction((movement) => {
       const cartesian = viewer.camera.pickEllipsoid(movement.position, viewer.scene.globe.ellipsoid);
       if (!cartesian) return;
 
-      const modelMatrix = Cesium.Transforms.eastNorthUpToFixedFrame(cartesian);
-      const addModel = (model) => {
-        model.modelMatrix = modelMatrix;
-        viewer.scene.primitives.add(model);
-        setModels((prev) => [
-          ...prev,
-          { id: `model-${modelCounter++}`, name: placing.name, primitive: model, position: cartesian },
-        ]);
-        setPlacing(null);
-      };
-
-      if (Cesium.Model.fromGltfAsync) {
-        Cesium.Model.fromGltfAsync({ url: placing.url, modelMatrix }).then(addModel);
-      } else {
-        addModel(Cesium.Model.fromGltf({ url: placing.url, modelMatrix }));
+      if (pendingAction.type === "place") {
+        const modelMatrix = composeMatrix(Cesium, cartesian, 0, 0, 0);
+        const addModel = (model) => {
+          model.modelMatrix = modelMatrix;
+          model.scale = 1;
+          viewer.scene.primitives.add(model);
+          const id = `model-${modelCounter++}`;
+          setModels((prev) => [
+            ...prev,
+            { id, name: pendingAction.name, primitive: model, position: cartesian, heading: 0, pitch: 0, roll: 0, scale: 1 },
+          ]);
+          setSelectedModelId(id);
+          setPendingAction(null);
+        };
+        if (Cesium.Model.fromGltfAsync) {
+          Cesium.Model.fromGltfAsync({ url: pendingAction.url, modelMatrix }).then(addModel);
+        } else {
+          addModel(Cesium.Model.fromGltf({ url: pendingAction.url, modelMatrix }));
+        }
+      } else if (pendingAction.type === "move") {
+        setModels((prev) =>
+          prev.map((m) => {
+            if (m.id !== pendingAction.modelId) return m;
+            m.primitive.modelMatrix = composeMatrix(Cesium, cartesian, m.heading, m.pitch, m.roll);
+            return { ...m, position: cartesian };
+          })
+        );
+        setPendingAction(null);
       }
     }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
 
@@ -148,7 +172,7 @@ export default function VWorldMapModal() {
     return () => {
       handler.destroy();
     };
-  }, [placing]);
+  }, [pendingAction]);
 
   // Cesium sizes its canvas off window 'resize' events, which don't fire
   // when this modal's container goes from display:none back to visible —
@@ -159,10 +183,19 @@ export default function VWorldMapModal() {
     return () => clearTimeout(t);
   }, [open]);
 
+  // Screenshot framing and any pending place/move click are transient —
+  // reset them whenever the modal is closed so reopening starts clean.
+  useEffect(() => {
+    if (!open) {
+      setScreenshotMode(false);
+      setPendingAction(null);
+    }
+  }, [open]);
+
   function handleAddModelFile(file) {
     if (!file) return;
     const url = URL.createObjectURL(file);
-    setPlacing({ name: file.name, url });
+    setPendingAction({ type: "place", name: file.name, url });
   }
 
   function focusModel(m) {
@@ -179,6 +212,22 @@ export default function VWorldMapModal() {
     const viewer = viewerRef.current;
     if (viewer) viewer.scene.primitives.remove(m.primitive);
     setModels((prev) => prev.filter((x) => x.id !== m.id));
+    if (selectedModelId === m.id) setSelectedModelId(null);
+  }
+
+  // Applies a heading/pitch/roll/scale patch to a placed model and
+  // re-renders its transform immediately.
+  function updateTransform(modelId, patch) {
+    const Cesium = cesiumRef.current;
+    setModels((prev) =>
+      prev.map((m) => {
+        if (m.id !== modelId) return m;
+        const next = { ...m, ...patch };
+        m.primitive.modelMatrix = composeMatrix(Cesium, next.position, next.heading, next.pitch, next.roll);
+        m.primitive.scale = next.scale;
+        return next;
+      })
+    );
   }
 
   function applyFov(deg) {
@@ -239,6 +288,7 @@ export default function VWorldMapModal() {
         result = await cropImage(fullDataUrl, box);
       }
       setNodeOutput(targetNodeId, result);
+      setScreenshotMode(false);
       closeVWorldMap();
     } catch (err) {
       setError(err.message);
@@ -247,7 +297,7 @@ export default function VWorldMapModal() {
     }
   }
 
-  const overlayBox = ratioOption.value ? fitBoxForRatio(ratioOption.value, 1, 1) : null;
+  const overlayBox = screenshotMode && ratioOption.value ? fitBoxForRatio(ratioOption.value, 1, 1) : null;
 
   return createPortal(
     <div className="vworld-overlay" hidden={!open}>
@@ -261,54 +311,147 @@ export default function VWorldMapModal() {
 
         <div className="vworld-body">
           <div className="vworld-side">
-            <div className="layers-title">Model placement ({models.length})</div>
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept=".glb,.gltf"
-              style={{ display: "none" }}
-              onChange={(e) => {
-                handleAddModelFile(e.target.files?.[0]);
-                e.target.value = "";
-              }}
-            />
-            <button className="btn secondary" onClick={() => fileInputRef.current?.click()} disabled={status !== "ready"}>
-              + Add .glb model
-            </button>
-            {placing ? <div className="hint">Click on the map to place "{placing.name}"...</div> : null}
-
-            {models.map((m) => (
-              <div className="layer-row" key={m.id}>
-                <span className="layer-name">{m.name}</span>
-                <button className="layer-btn" onClick={() => focusModel(m)} title="Focus">
-                  ⌖
+            {screenshotMode ? (
+              <>
+                <div className="layers-title">Screenshot mode</div>
+                <div className="hint">
+                  Pick a ratio below and pan/zoom the map to frame the shot, then Capture. Cancel to go back to
+                  editing.
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="layers-title">Model placement ({models.length})</div>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".glb,.gltf"
+                  style={{ display: "none" }}
+                  onChange={(e) => {
+                    handleAddModelFile(e.target.files?.[0]);
+                    e.target.value = "";
+                  }}
+                />
+                <button className="btn secondary" onClick={() => fileInputRef.current?.click()} disabled={status !== "ready"}>
+                  + Add .glb model
                 </button>
-                <button className="layer-btn" onClick={() => removeModel(m)} title="Remove">
-                  🗑
-                </button>
-              </div>
-            ))}
+                {pendingAction?.type === "place" ? (
+                  <div className="hint">Click on the map to place "{pendingAction.name}"...</div>
+                ) : null}
+                {pendingAction?.type === "move" ? <div className="hint">Click on the map to move the model...</div> : null}
 
-            <div className="layers-title" style={{ marginTop: 16 }}>
-              Address search
-            </div>
-            <div className="row">
-              <input
-                className="node-input"
-                placeholder="e.g. 테헤란로 152"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && handleSearch()}
-              />
-            </div>
-            <button className="btn secondary" onClick={handleSearch} disabled={searching || status !== "ready"}>
-              {searching ? "Searching..." : "Search"}
-            </button>
-            {searchResults.map((item, i) => (
-              <div className="layer-row" key={i} style={{ cursor: "pointer" }} onClick={() => goToResult(item)}>
-                <span className="layer-name">{item?.address?.road || item?.address?.parcel || item?.title}</span>
-              </div>
-            ))}
+                {models.map((m) => (
+                  <div
+                    className={`layer-row vworld-model-row${m.id === selectedModelId ? " selected" : ""}`}
+                    key={m.id}
+                    onClick={() => setSelectedModelId(m.id)}
+                  >
+                    <span className="layer-name">{m.name}</span>
+                    <button
+                      className="layer-btn"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        focusModel(m);
+                      }}
+                      title="Focus"
+                    >
+                      ⌖
+                    </button>
+                    <button
+                      className="layer-btn"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        removeModel(m);
+                      }}
+                      title="Remove"
+                    >
+                      🗑
+                    </button>
+                  </div>
+                ))}
+
+                {selectedModel ? (
+                  <div className="vworld-transform">
+                    <div className="layers-title" style={{ marginTop: 16 }}>
+                      Transform: {selectedModel.name}
+                    </div>
+                    <button
+                      className="btn secondary"
+                      onClick={() => setPendingAction({ type: "move", modelId: selectedModel.id })}
+                    >
+                      {pendingAction?.type === "move" && pendingAction.modelId === selectedModel.id
+                        ? "Click map to place..."
+                        : "📍 Move (click map)"}
+                    </button>
+
+                    <label>Heading {Math.round(toDeg(selectedModel.heading))}°</label>
+                    <input
+                      type="range"
+                      min="0"
+                      max="360"
+                      value={toDeg(selectedModel.heading)}
+                      onChange={(e) => updateTransform(selectedModel.id, { heading: toRad(Number(e.target.value)) })}
+                    />
+
+                    <label>Pitch {Math.round(toDeg(selectedModel.pitch))}°</label>
+                    <input
+                      type="range"
+                      min="-90"
+                      max="90"
+                      value={toDeg(selectedModel.pitch)}
+                      onChange={(e) => updateTransform(selectedModel.id, { pitch: toRad(Number(e.target.value)) })}
+                    />
+
+                    <label>Roll {Math.round(toDeg(selectedModel.roll))}°</label>
+                    <input
+                      type="range"
+                      min="-180"
+                      max="180"
+                      value={toDeg(selectedModel.roll)}
+                      onChange={(e) => updateTransform(selectedModel.id, { roll: toRad(Number(e.target.value)) })}
+                    />
+
+                    <label>Scale {selectedModel.scale.toFixed(2)}×</label>
+                    <input
+                      type="range"
+                      min="0.1"
+                      max="10"
+                      step="0.1"
+                      value={selectedModel.scale}
+                      onChange={(e) => updateTransform(selectedModel.id, { scale: Number(e.target.value) })}
+                    />
+
+                    <button
+                      className="btn secondary"
+                      onClick={() => updateTransform(selectedModel.id, { heading: 0, pitch: 0, roll: 0, scale: 1 })}
+                    >
+                      Reset transform
+                    </button>
+                  </div>
+                ) : null}
+
+                <div className="layers-title" style={{ marginTop: 16 }}>
+                  Address search
+                </div>
+                <div className="row">
+                  <input
+                    className="node-input"
+                    placeholder="e.g. 테헤란로 152"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && handleSearch()}
+                  />
+                </div>
+                <button className="btn secondary" onClick={handleSearch} disabled={searching || status !== "ready"}>
+                  {searching ? "Searching..." : "Search"}
+                </button>
+                {searchResults.map((item, i) => (
+                  <div className="layer-row" key={i} style={{ cursor: "pointer" }} onClick={() => goToResult(item)}>
+                    <span className="layer-name">{item?.address?.road || item?.address?.parcel || item?.title}</span>
+                  </div>
+                ))}
+              </>
+            )}
 
             {error ? <div className="error-text">{error}</div> : null}
           </div>
@@ -337,33 +480,41 @@ export default function VWorldMapModal() {
         <div className="vworld-footer">
           <div className="vworld-fov">
             <label>FOV</label>
-            <input
-              type="range"
-              min="10"
-              max="120"
-              value={fov}
-              onChange={(e) => applyFov(Number(e.target.value))}
-            />
+            <input type="range" min="10" max="120" value={fov} onChange={(e) => applyFov(Number(e.target.value))} />
             <span>{fov}°</span>
             <button className="btn secondary" onClick={() => applyFov(60)} title="Reset FOV">
               ⟲
             </button>
           </div>
 
-          <div className="vworld-ratio">
-            <label>Capture ratio</label>
-            <select className="node-select" value={ratioLabel} onChange={(e) => setRatioLabel(e.target.value)}>
-              {RATIO_OPTIONS.map((r) => (
-                <option key={r.label} value={r.label}>
-                  {r.label}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <button className="btn vworld-capture-btn" onClick={handleCapture} disabled={status !== "ready" || capturing}>
-            {capturing ? "Capturing..." : "📷 Capture"}
-          </button>
+          {screenshotMode ? (
+            <>
+              <div className="vworld-ratio">
+                <label>Capture ratio</label>
+                <select className="node-select" value={ratioLabel} onChange={(e) => setRatioLabel(e.target.value)}>
+                  {RATIO_OPTIONS.map((r) => (
+                    <option key={r.label} value={r.label}>
+                      {r.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <button className="btn secondary" onClick={() => setScreenshotMode(false)} disabled={capturing}>
+                Cancel
+              </button>
+              <button className="btn vworld-capture-btn" onClick={handleCapture} disabled={status !== "ready" || capturing}>
+                {capturing ? "Capturing..." : "✓ Take Screenshot"}
+              </button>
+            </>
+          ) : (
+            <button
+              className="btn vworld-capture-btn"
+              onClick={() => setScreenshotMode(true)}
+              disabled={status !== "ready"}
+            >
+              📷 Capture
+            </button>
+          )}
         </div>
       </div>
     </div>,
