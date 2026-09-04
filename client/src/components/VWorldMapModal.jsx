@@ -31,6 +31,12 @@ function fitBoxForRatio(ratio, containerW, containerH) {
   };
 }
 
+function clamp(v, min, max) {
+  return Math.min(max, Math.max(min, v));
+}
+
+const CAPTURE_CORNERS = ["nw", "ne", "sw", "se"];
+
 function composeMatrix(Cesium, position, heading, pitch, roll) {
   return Cesium.Transforms.headingPitchRollToFixedFrame(position, new Cesium.HeadingPitchRoll(heading, pitch, roll));
 }
@@ -142,6 +148,7 @@ export default function VWorldMapModal() {
   const [fov, setFov] = useState(60);
   const [screenshotMode, setScreenshotMode] = useState(false);
   const [ratioLabel, setRatioLabel] = useState("16:9");
+  const [captureRect, setCaptureRect] = useState(null); // { xPct, yPct, wPct, hPct }, stage-relative
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState([]);
   const [searching, setSearching] = useState(false);
@@ -162,6 +169,7 @@ export default function VWorldMapModal() {
   const gizmoRef = useRef(null); // { modelId, entities: { [key]: Entity } }
   const gizmoHandlerRef = useRef(null);
   const dragRef = useRef(null);
+  const captureDragRef = useRef(null); // { mode: 'move'|'resize', corner?, startPointer, startRect, anchor }
   const modelsRef = useRef(models);
   const selectedModelIdRef = useRef(selectedModelId);
   const pendingActionRef = useRef(pendingAction);
@@ -639,6 +647,104 @@ export default function VWorldMapModal() {
     }
   }, [open]);
 
+  // Re-centers the capture box (ratio-locked) whenever screenshot mode
+  // starts or the ratio changes — the user can then move/resize it freely
+  // from there. Uses the stage's real pixel size, not a fake 1:1 square
+  // (that mismatch was the "16:9 looks off" bug: the preview box was fit
+  // against an assumed square container while the actual crop at capture
+  // time correctly used the real, non-square stage rect).
+  useEffect(() => {
+    if (!screenshotMode || !ratioOption.value) {
+      setCaptureRect(null);
+      return;
+    }
+    const stage = stageRef.current;
+    if (!stage) return;
+    const box = stage.getBoundingClientRect();
+    setCaptureRect(fitBoxForRatio(ratioOption.value, box.width, box.height));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [screenshotMode, ratioLabel]);
+
+  function capturePointFromEvent(e) {
+    const box = stageRef.current.getBoundingClientRect();
+    return {
+      x: clamp((e.clientX - box.left) / box.width, 0, 1),
+      y: clamp((e.clientY - box.top) / box.height, 0, 1),
+    };
+  }
+
+  function startCaptureMove(e) {
+    e.stopPropagation();
+    e.currentTarget.setPointerCapture(e.pointerId);
+    captureDragRef.current = { mode: "move", startPointer: capturePointFromEvent(e), startRect: captureRect };
+  }
+
+  function startCaptureResize(corner) {
+    return (e) => {
+      e.stopPropagation();
+      e.currentTarget.setPointerCapture(e.pointerId);
+      const anchor = {
+        x: corner.includes("w") ? captureRect.xPct + captureRect.wPct : captureRect.xPct,
+        y: corner.includes("n") ? captureRect.yPct + captureRect.hPct : captureRect.yPct,
+      };
+      captureDragRef.current = { mode: "resize", corner, anchor };
+    };
+  }
+
+  function handleCaptureDragMove(e) {
+    const drag = captureDragRef.current;
+    if (!drag || !captureRect) return;
+    const box = stageRef.current.getBoundingClientRect();
+    const p = capturePointFromEvent(e);
+
+    if (drag.mode === "move") {
+      const dx = p.x - drag.startPointer.x;
+      const dy = p.y - drag.startPointer.y;
+      setCaptureRect({
+        ...drag.startRect,
+        xPct: clamp(drag.startRect.xPct + dx, 0, 1 - drag.startRect.wPct),
+        yPct: clamp(drag.startRect.yPct + dy, 0, 1 - drag.startRect.hPct),
+      });
+      return;
+    }
+
+    // resize, anchored at the opposite corner, ratio-locked
+    const { anchor, corner } = drag;
+    const dirX = corner.includes("w") ? -1 : 1;
+    const dirY = corner.includes("n") ? -1 : 1;
+    const ratio = ratioOption.value;
+
+    const maxWidthPx = (dirX > 0 ? 1 - anchor.x : anchor.x) * box.width;
+    const maxHeightPx = (dirY > 0 ? 1 - anchor.y : anchor.y) * box.height;
+
+    let widthPx = Math.abs(p.x - anchor.x) * box.width;
+    let heightPx = widthPx / ratio;
+
+    if (heightPx > maxHeightPx) {
+      heightPx = maxHeightPx;
+      widthPx = heightPx * ratio;
+    }
+    if (widthPx > maxWidthPx) {
+      widthPx = maxWidthPx;
+      heightPx = widthPx / ratio;
+    }
+    if (widthPx < box.width * 0.05) return;
+
+    const wPct = widthPx / box.width;
+    const hPct = heightPx / box.height;
+
+    setCaptureRect({
+      wPct,
+      hPct,
+      xPct: dirX > 0 ? anchor.x : anchor.x - wPct,
+      yPct: dirY > 0 ? anchor.y : anchor.y - hPct,
+    });
+  }
+
+  function endCaptureDrag() {
+    captureDragRef.current = null;
+  }
+
   function handleAddModelFile(file) {
     if (!file) return;
     const url = URL.createObjectURL(file);
@@ -797,10 +903,8 @@ export default function VWorldMapModal() {
       const fullDataUrl = canvas.toDataURL("image/png");
 
       let result = fullDataUrl;
-      if (ratioOption.value) {
-        const rect = stageRef.current.getBoundingClientRect();
-        const box = fitBoxForRatio(ratioOption.value, rect.width, rect.height);
-        result = await cropImage(fullDataUrl, box);
+      if (ratioOption.value && captureRect) {
+        result = await cropImage(fullDataUrl, captureRect);
       }
       setNodeOutput(targetNodeId, result);
       setScreenshotMode(false);
@@ -811,8 +915,6 @@ export default function VWorldMapModal() {
       setCapturing(false);
     }
   }
-
-  const overlayBox = screenshotMode && ratioOption.value ? fitBoxForRatio(ratioOption.value, 1, 1) : null;
 
   return createPortal(
     <div className="vworld-overlay" hidden={!open}>
@@ -1022,17 +1124,29 @@ export default function VWorldMapModal() {
             {status === "error" ? <div className="vworld-status error-text">{error}</div> : null}
             <div id="vworld-map-canvas" ref={mapContainerRef} className="vworld-canvas" />
             <div className="vworld-capture-guide" ref={stageRef}>
-              {overlayBox ? (
+              {captureRect ? (
                 <div
                   className="crop-rect"
+                  onPointerDown={startCaptureMove}
+                  onPointerMove={handleCaptureDragMove}
+                  onPointerUp={endCaptureDrag}
                   style={{
-                    left: `${overlayBox.xPct * 100}%`,
-                    top: `${overlayBox.yPct * 100}%`,
-                    width: `${overlayBox.wPct * 100}%`,
-                    height: `${overlayBox.hPct * 100}%`,
-                    pointerEvents: "none",
+                    left: `${captureRect.xPct * 100}%`,
+                    top: `${captureRect.yPct * 100}%`,
+                    width: `${captureRect.wPct * 100}%`,
+                    height: `${captureRect.hPct * 100}%`,
                   }}
-                />
+                >
+                  {CAPTURE_CORNERS.map((c) => (
+                    <span
+                      key={c}
+                      className={`crop-handle crop-handle-${c}`}
+                      onPointerDown={startCaptureResize(c)}
+                      onPointerMove={handleCaptureDragMove}
+                      onPointerUp={endCaptureDrag}
+                    />
+                  ))}
+                </div>
               ) : null}
             </div>
             {screenshotMode ? (
