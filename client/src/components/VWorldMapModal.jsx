@@ -45,6 +45,7 @@ function composeMatrix(Cesium, position, heading, pitch, roll) {
 }
 
 let modelCounter = 1;
+let hiddenBuildingCounter = 1;
 
 // --- Gumball gizmo geometry/math ------------------------------------------
 // Rhino-style gumball: a translate arrow + rotation ring per axis, world
@@ -158,6 +159,7 @@ export default function VWorldMapModal() {
   const [cadastralTooFar, setCadastralTooFar] = useState(false);
   const [showBuildings, setShowBuildings] = useState(true);
   const [showBuildingNames, setShowBuildingNames] = useState(true);
+  const [hiddenBuildings, setHiddenBuildings] = useState([]); // { id, name, feature }
 
   const mapContainerRef = useRef(null);
   const stageRef = useRef(null);
@@ -167,6 +169,7 @@ export default function VWorldMapModal() {
   const clickHandlerRef = useRef(null);
   const fileInputRef = useRef(null);
   const outlineStageRef = useRef(null);
+  const allEdgesStageRef = useRef(null);
   const gizmoRef = useRef(null); // { modelId, entities: { [key]: Entity } }
   const gizmoHandlerRef = useRef(null);
   const dragRef = useRef(null);
@@ -180,6 +183,10 @@ export default function VWorldMapModal() {
 
   useEffect(() => {
     modelsRef.current = models;
+    if (allEdgesStageRef.current) {
+      allEdgesStageRef.current.selected = models.map((m) => m.primitive);
+      viewerRef.current?.scene.requestRender();
+    }
   }, [models]);
   useEffect(() => {
     selectedModelIdRef.current = selectedModelId;
@@ -231,14 +238,32 @@ export default function VWorldMapModal() {
             mapRef.current = window.__vworldMapInstance || null;
             cesiumRef.current = window.Cesium;
 
-            // Yellow silhouette on the selected model. Guarded on a window
-            // flag (not just a local ref) for the same StrictMode-double-
-            // mount reason as the viewer init above — adding this twice
-            // would draw two overlapping outlines.
+            // Two edge-detection post-process stages, stacked (both use
+            // Cesium's normal/depth-based edge detector, not just an outer
+            // silhouette, so face-to-face edges within a model show up too
+            // — e.g. where a tower's side meets its roof — matching a
+            // SketchUp-style CAD line drawing rather than a plain outline).
+            // Black, on every placed model, added first: always-on CAD edges.
+            // Yellow, on the selected model, added second so it draws on
+            // top: the selected model's edges turn fully yellow instead.
+            // Both guarded on window flags (not local refs) for the same
+            // StrictMode-double-mount reason as the viewer init above —
+            // adding either twice would draw doubled/overlapping edges.
             try {
+              const Cesium = window.Cesium;
+              const viewer = window.ws3d.viewer;
+
+              if (!window.__vworldAllEdges) {
+                const allEdges = Cesium.PostProcessStageLibrary.createEdgeDetectionStage();
+                allEdges.uniforms.color = Cesium.Color.BLACK;
+                allEdges.uniforms.length = 0.02;
+                allEdges.selected = [];
+                viewer.scene.postProcessStages.add(Cesium.PostProcessStageLibrary.createSilhouetteStage([allEdges]));
+                window.__vworldAllEdges = allEdges;
+              }
+              allEdgesStageRef.current = window.__vworldAllEdges;
+
               if (!window.__vworldOutline) {
-                const Cesium = window.Cesium;
-                const viewer = window.ws3d.viewer;
                 const edgeDetection = Cesium.PostProcessStageLibrary.createEdgeDetectionStage();
                 edgeDetection.uniforms.color = Cesium.Color.fromCssColorString("#ffe600");
                 edgeDetection.uniforms.length = 0.02;
@@ -288,6 +313,20 @@ export default function VWorldMapModal() {
 
     const handler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
     handler.setInputAction((movement) => {
+      if (pendingAction.type === "hideBuilding") {
+        // A real VWorld building is a Cesium3DTileFeature (has .show and
+        // .getProperty), unlike our own placed .glb models (plain Model
+        // primitives) or empty ground (nothing picked) — only hide that.
+        const picked = viewer.scene.pick(movement.position);
+        if (picked && typeof picked.show === "boolean" && typeof picked.getProperty === "function") {
+          picked.show = false;
+          const name = picked.getProperty("MODEL_NAME") || picked.getProperty("TD_ID") || "Building";
+          setHiddenBuildings((prev) => [...prev, { id: `hb-${hiddenBuildingCounter++}`, name, feature: picked }]);
+          viewer.scene.requestRender();
+        }
+        return; // stays in hideBuilding mode for the next click
+      }
+
       const cartesian = viewer.camera.pickEllipsoid(movement.position, viewer.scene.globe.ellipsoid);
       if (!cartesian) return;
 
@@ -296,15 +335,6 @@ export default function VWorldMapModal() {
         const addModel = (model) => {
           model.modelMatrix = modelMatrix;
           model.scale = 1;
-          // Always-on black CAD-style edges on every placed model (distinct
-          // from the yellow selection outline, which only shows up while
-          // the model is selected).
-          try {
-            model.silhouetteColor = Cesium.Color.BLACK;
-            model.silhouetteSize = 1.5;
-          } catch {
-            // unsupported in this Cesium build — the model still renders fine
-          }
           viewer.scene.primitives.add(model);
           const id = `model-${modelCounter++}`;
           setModels((prev) => [
@@ -683,6 +713,30 @@ export default function VWorldMapModal() {
     viewer.scene.requestRender();
   }
 
+  // Restoring a hidden building only re-shows the exact Cesium3DTileFeature
+  // instance we hid — if VWorld's tileset evicts and later reloads that
+  // building's tile (its LRU cache, out of view for a while), a fresh
+  // feature instance replaces it at its default (visible) show state, so
+  // the building would already be back on its own in that case too.
+  function restoreBuilding(id) {
+    setHiddenBuildings((prev) => {
+      const entry = prev.find((b) => b.id === id);
+      if (entry) entry.feature.show = true;
+      return prev.filter((b) => b.id !== id);
+    });
+    viewerRef.current?.scene.requestRender();
+  }
+
+  function restoreAllBuildings() {
+    setHiddenBuildings((prev) => {
+      prev.forEach((b) => {
+        b.feature.show = true;
+      });
+      return [];
+    });
+    viewerRef.current?.scene.requestRender();
+  }
+
   // Building/place-name text labels — turns out these ARE reachable through
   // the public SDK after all (earlier testing over unlabeled office towers
   // gave a false negative). poi_base/poi_bound are the layers that actually
@@ -953,6 +1007,30 @@ export default function VWorldMapModal() {
                     Hidden at this altitude — VWorld's server only renders parcel data when the camera is close to
                     the ground. Zoom in to bring it back.
                   </div>
+                ) : null}
+
+                <div className="layers-title" style={{ marginTop: 16 }}>
+                  Hide buildings ({hiddenBuildings.length})
+                </div>
+                <button
+                  className="btn secondary"
+                  onClick={() => setPendingAction((prev) => (prev?.type === "hideBuilding" ? null : { type: "hideBuilding" }))}
+                  disabled={status !== "ready"}
+                >
+                  {pendingAction?.type === "hideBuilding" ? "Click buildings to hide (click again to stop)" : "🏢 Hide building (click map)"}
+                </button>
+                {hiddenBuildings.map((b) => (
+                  <div className="layer-row" key={b.id}>
+                    <span className="layer-name">{b.name}</span>
+                    <button className="layer-btn" onClick={() => restoreBuilding(b.id)} title="Restore">
+                      ↺
+                    </button>
+                  </div>
+                ))}
+                {hiddenBuildings.length > 1 ? (
+                  <button className="btn secondary" onClick={restoreAllBuildings}>
+                    Restore all
+                  </button>
                 ) : null}
               </>
             )}

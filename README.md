@@ -43,8 +43,10 @@ REPLICATE_API_TOKEN=
 - **Image** — upload a local image, becomes an input for other nodes.
 - **VWorld** — opens a 3D map (real VWorld imagery/buildings). Search an
   address or pan/zoom manually, place `.glb` models by clicking the globe
-  (each gets a black CAD-style edge outline, a yellow selection silhouette,
-  and a Rhino-Gumball-style move/rotate gizmo centered on it), toggle the
+  (each gets CAD-style black edges on every face-to-face seam — not just an
+  outer outline — plus a yellow selection highlight and a Rhino-Gumball-
+  style move/rotate gizmo centered on it, all via Cesium's normal/depth
+  edge-detection post-process; clicking empty space deselects), toggle the
   cadastral map (지적도, proxied through the server since WMS has no CORS
   headers), the 3D buildings themselves, and building/place-name text
   labels, and Capture writes the screenshot as this node's output at any
@@ -60,6 +62,14 @@ REPLICATE_API_TOKEN=
   complex names) — confirmed by hiding/showing each and watching the
   effect live, at a location with actual named POIs (an unlabeled office
   block gives a false negative here, since there's nothing to hide).
+  "🏢 Hide building" mode picks individual VWorld buildings (real
+  `Cesium3DTileFeature`s, distinct from our own placed `.glb` models) and
+  sets `feature.show = false` on just that one — confirmed live (a specific
+  rooftop disappears/reappears on hide/restore). Each hidden building is
+  listed with a restore button; note that if VWorld's tileset ever evicts
+  and reloads that building's tile (it's out of view long enough), the
+  fresh feature instance comes back at its default visible state on its
+  own, since the hide only applies to the specific instance we hid.
 - **Imagine** — the Gemini node. Connect a base image (required) and
   optionally a reference image, write a prompt, pick ratio/resolution, hit
   Generate. The "Edit" button opens a canvas to mark up the image
