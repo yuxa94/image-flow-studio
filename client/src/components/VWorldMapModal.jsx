@@ -12,15 +12,6 @@ const DEFAULT_LON = 127.027619;
 const DEFAULT_LAT = 37.497926;
 const DEFAULT_ALT = 1500;
 
-// VWorld's cadastral (지적도) WMS layer isn't actually broken at high camera
-// altitude — its server enforces a scale limit and starts returning valid
-// 200 OK but blank 1x1 tiles once the requested bbox gets too wide (verified
-// by hitting the proxy directly: bbox <= ~0.02deg returns real content,
-// > ~0.05deg returns an empty image). We can't override a server-side scale
-// rule, so instead we surface *why* the layer disappears once the camera
-// climbs past roughly the altitude where that bbox threshold is crossed.
-const CADASTRAL_MAX_HEIGHT = 3000;
-
 const toDeg = (rad) => (rad * 180) / Math.PI;
 const toRad = (deg) => (deg * Math.PI) / 180;
 
@@ -155,11 +146,9 @@ export default function VWorldMapModal() {
   const [searchResults, setSearchResults] = useState([]);
   const [searching, setSearching] = useState(false);
   const [capturing, setCapturing] = useState(false);
-  const [showCadastral, setShowCadastral] = useState(false);
-  const [cadastralTooFar, setCadastralTooFar] = useState(false);
   const [showBuildings, setShowBuildings] = useState(true);
   const [showBuildingNames, setShowBuildingNames] = useState(true);
-  const [hiddenBuildings, setHiddenBuildings] = useState([]); // { id, name, feature }
+  const [hiddenBuildings, setHiddenBuildings] = useState([]); // { id, name, key, feature }
 
   const mapContainerRef = useRef(null);
   const stageRef = useRef(null);
@@ -176,7 +165,11 @@ export default function VWorldMapModal() {
   const modelsRef = useRef(models);
   const selectedModelIdRef = useRef(selectedModelId);
   const pendingActionRef = useRef(pendingAction);
-  const cadastralLayerRef = useRef(null);
+  // Keys (TD_ID/MODEL_NAME) of manually hidden VWorld buildings — survives
+  // tile reloads, unlike the Cesium3DTileFeature objects themselves (a
+  // building whose tile gets evicted and later reloaded is a brand-new
+  // feature instance with default visibility; see the tileLoad hook below).
+  const hiddenBuildingKeysRef = useRef(new Set());
 
   const ratioOption = RATIO_OPTIONS.find((r) => r.label === ratioLabel) || RATIO_OPTIONS[0];
   const selectedModel = models.find((m) => m.id === selectedModelId) || null;
@@ -277,6 +270,44 @@ export default function VWorldMapModal() {
               console.warn("VWorld: silhouette outline unavailable", e);
             }
 
+            // A building we hid stays hidden only on the exact
+            // Cesium3DTileFeature instance we touched — once its tile is
+            // evicted (out of view/zoomed out) and reloaded, the tileset
+            // hands back a brand-new feature at default (visible) show, so
+            // the building silently reappears. Re-applying hide on every
+            // tile load, keyed by TD_ID/MODEL_NAME (checked against
+            // hiddenBuildingKeysRef, which survives reloads), fixes that.
+            // Hooked once globally (guarded like the outline stages above)
+            // and covers tilesets added later too, since VWorld streams in
+            // new regional tilesets as the camera moves.
+            try {
+              if (!window.__vworldTileHideHook) {
+                const reapplyHiddenOnLoad = (tile) => {
+                  const content = tile.content;
+                  if (!content || typeof content.featuresLength !== "number") return;
+                  for (let i = 0; i < content.featuresLength; i++) {
+                    const feature = content.getFeature(i);
+                    const key = feature.getProperty("TD_ID") || feature.getProperty("MODEL_NAME");
+                    if (key && hiddenBuildingKeysRef.current.has(key)) {
+                      feature.show = false;
+                    }
+                  }
+                };
+                const hookTileset = (primitive) => {
+                  if (!(primitive instanceof Cesium.Cesium3DTileset) || primitive.__vworldHideHooked) return;
+                  primitive.__vworldHideHooked = true;
+                  primitive.tileLoad.addEventListener(reapplyHiddenOnLoad);
+                };
+                for (let i = 0; i < viewer.scene.primitives.length; i++) {
+                  hookTileset(viewer.scene.primitives.get(i));
+                }
+                viewer.scene.primitives.primitiveAdded.addEventListener(hookTileset);
+                window.__vworldTileHideHook = true;
+              }
+            } catch (e) {
+              console.warn("VWorld: tile-reload hide hook unavailable", e);
+            }
+
             setStatus("ready");
           } else if (attempts < 100) {
             setTimeout(() => waitForViewer(attempts + 1), 100);
@@ -320,8 +351,10 @@ export default function VWorldMapModal() {
         const picked = viewer.scene.pick(movement.position);
         if (picked && typeof picked.show === "boolean" && typeof picked.getProperty === "function") {
           picked.show = false;
+          const key = picked.getProperty("TD_ID") || picked.getProperty("MODEL_NAME") || null;
+          if (key) hiddenBuildingKeysRef.current.add(key);
           const name = picked.getProperty("MODEL_NAME") || picked.getProperty("TD_ID") || "Building";
-          setHiddenBuildings((prev) => [...prev, { id: `hb-${hiddenBuildingCounter++}`, name, feature: picked }]);
+          setHiddenBuildings((prev) => [...prev, { id: `hb-${hiddenBuildingCounter++}`, name, key, feature: picked }]);
           viewer.scene.requestRender();
         }
         return; // stays in hideBuilding mode for the next click
@@ -591,28 +624,6 @@ export default function VWorldMapModal() {
     }
   }, [open]);
 
-  // While the cadastral layer is on, watch camera altitude so we can tell
-  // the user *why* it just disappeared instead of leaving it looking broken.
-  useEffect(() => {
-    const viewer = viewerRef.current;
-    if (!showCadastral || !viewer) {
-      setCadastralTooFar(false);
-      return;
-    }
-    const checkHeight = () => {
-      const height = viewer.camera.positionCartographic?.height ?? 0;
-      setCadastralTooFar(height > CADASTRAL_MAX_HEIGHT);
-    };
-    checkHeight();
-    viewer.camera.changed.addEventListener(checkHeight);
-    const prevPercentageChanged = viewer.camera.percentageChanged;
-    viewer.camera.percentageChanged = 0.05;
-    return () => {
-      viewer.camera.changed.removeEventListener(checkHeight);
-      viewer.camera.percentageChanged = prevPercentageChanged;
-    };
-  }, [showCadastral]);
-
   function handleAddModelFile(file) {
     if (!file) return;
     const url = URL.createObjectURL(file);
@@ -660,41 +671,6 @@ export default function VWorldMapModal() {
     }
   }
 
-  // VWorld's own cadastral (지적도) toggle isn't exposed anywhere in the
-  // public SDK either — this adds/removes VWorld's public WMS cadastral
-  // layer (lp_pa_cbnd_bubun) as a plain Cesium imagery layer instead,
-  // proxied through the server since the WMS endpoint has no CORS headers.
-  // Note: the layer only renders close to the ground — see
-  // CADASTRAL_MAX_HEIGHT above for why, that's a server-side scale limit.
-  function toggleCadastral(next) {
-    setShowCadastral(next);
-    const viewer = viewerRef.current;
-    const Cesium = cesiumRef.current;
-    if (!viewer || !Cesium) return;
-
-    if (next) {
-      if (cadastralLayerRef.current) return;
-      const provider = new Cesium.WebMapServiceImageryProvider({
-        url: `${window.location.origin}/api/vworld/wms`,
-        layers: "lp_pa_cbnd_bubun",
-        parameters: {
-          SERVICE: "WMS",
-          VERSION: "1.3.0",
-          REQUEST: "GetMap",
-          STYLES: "lp_pa_cbnd_bubun",
-          FORMAT: "image/png",
-          TRANSPARENT: true,
-        },
-        crs: "EPSG:4326",
-      });
-      cadastralLayerRef.current = viewer.imageryLayers.addImageryProvider(provider);
-    } else if (cadastralLayerRef.current) {
-      viewer.imageryLayers.remove(cadastralLayerRef.current);
-      cadastralLayerRef.current = null;
-    }
-    viewer.scene.requestRender();
-  }
-
   // 3D building visibility, via the vw.Map instance's own layer registry —
   // confirmed working directly (unlike facility_build_text/label, which
   // don't exist in this SDK build): map.getLayerElement('facility_build')
@@ -713,15 +689,17 @@ export default function VWorldMapModal() {
     viewer.scene.requestRender();
   }
 
-  // Restoring a hidden building only re-shows the exact Cesium3DTileFeature
-  // instance we hid — if VWorld's tileset evicts and later reloads that
-  // building's tile (its LRU cache, out of view for a while), a fresh
-  // feature instance replaces it at its default (visible) show state, so
-  // the building would already be back on its own in that case too.
+  // Un-hiding has to clear the key from hiddenBuildingKeysRef too, not just
+  // set .show back on the current feature instance — otherwise the next
+  // tile reload for that building (see the tileLoad hook above) would hide
+  // it right back based on the stale key.
   function restoreBuilding(id) {
     setHiddenBuildings((prev) => {
       const entry = prev.find((b) => b.id === id);
-      if (entry) entry.feature.show = true;
+      if (entry) {
+        entry.feature.show = true;
+        if (entry.key) hiddenBuildingKeysRef.current.delete(entry.key);
+      }
       return prev.filter((b) => b.id !== id);
     });
     viewerRef.current?.scene.requestRender();
@@ -731,6 +709,7 @@ export default function VWorldMapModal() {
     setHiddenBuildings((prev) => {
       prev.forEach((b) => {
         b.feature.show = true;
+        if (b.key) hiddenBuildingKeysRef.current.delete(b.key);
       });
       return [];
     });
@@ -993,21 +972,6 @@ export default function VWorldMapModal() {
                   />
                   Building names
                 </label>
-                <label className="vworld-toggle">
-                  <input
-                    type="checkbox"
-                    checked={showCadastral}
-                    onChange={(e) => toggleCadastral(e.target.checked)}
-                    disabled={status !== "ready"}
-                  />
-                  Cadastral map (지적도)
-                </label>
-                {showCadastral && cadastralTooFar ? (
-                  <div className="hint">
-                    Hidden at this altitude — VWorld's server only renders parcel data when the camera is close to
-                    the ground. Zoom in to bring it back.
-                  </div>
-                ) : null}
 
                 <div className="layers-title" style={{ marginTop: 16 }}>
                   Hide buildings ({hiddenBuildings.length})

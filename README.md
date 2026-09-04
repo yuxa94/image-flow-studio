@@ -47,15 +47,9 @@ REPLICATE_API_TOKEN=
   outer outline — plus a yellow selection highlight and a Rhino-Gumball-
   style move/rotate gizmo centered on it, all via Cesium's normal/depth
   edge-detection post-process; clicking empty space deselects), toggle the
-  cadastral map (지적도, proxied through the server since WMS has no CORS
-  headers), the 3D buildings themselves, and building/place-name text
-  labels, and Capture writes the screenshot as this node's output at any
-  of the same ratio presets Crop/Imagine use.
-  The cadastral layer only renders close to the ground — VWorld's own WMS
-  server enforces this (verified directly: it returns a real tile for a
-  small bbox but a blank 200 OK for a wide one), so it's a server-side
-  scale limit we can't override; the app shows a hint instead of just
-  leaving it looking broken once the camera climbs too high.
+  3D buildings themselves and building/place-name text labels, and Capture
+  writes the screenshot as this node's output at any of the same ratio
+  presets Crop/Imagine use.
   Buildings and building names are both toggled through the `vw.Map`
   instance's own `getLayerElement(name)` registry (`facility_build` for
   the 3D tileset; `poi_base`/`poi_bound` for named-POI text like apartment
@@ -64,12 +58,15 @@ REPLICATE_API_TOKEN=
   block gives a false negative here, since there's nothing to hide).
   "🏢 Hide building" mode picks individual VWorld buildings (real
   `Cesium3DTileFeature`s, distinct from our own placed `.glb` models) and
-  sets `feature.show = false` on just that one — confirmed live (a specific
-  rooftop disappears/reappears on hide/restore). Each hidden building is
-  listed with a restore button; note that if VWorld's tileset ever evicts
-  and reloads that building's tile (it's out of view long enough), the
-  fresh feature instance comes back at its default visible state on its
-  own, since the hide only applies to the specific instance we hid.
+  sets `feature.show = false` on just that one, listed with a restore
+  button — confirmed live (a specific rooftop disappears/reappears on
+  hide/restore). Hidden buildings also stay hidden across zoom-out/in:
+  VWorld's tileset evicts and reloads tiles as the camera moves, which
+  hands back a brand-new feature instance at default (visible) state, so a
+  `tileLoad` hook re-applies the hide (keyed by TD_ID/MODEL_NAME, tracked
+  separately from the feature object itself) whenever a hidden building's
+  tile reloads — confirmed by zooming out to 50km and back and checking
+  the same building stayed hidden.
 - **Imagine** — the Gemini node. Connect a base image (required) and
   optionally a reference image, write a prompt, pick ratio/resolution, hit
   Generate. The "Edit" button opens a canvas to mark up the image

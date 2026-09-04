@@ -112,28 +112,6 @@ app.get("/api/vworld/search", async (req, res) => {
   }
 });
 
-// Proxies VWorld's WMS tile GetMap requests (used for the cadastral map
-// overlay) — VWorld's WMS endpoint doesn't send CORS headers, so Cesium's
-// own tile fetch (which needs real pixel data for a WebGL texture, unlike
-// a plain <img> tag) fails outright when called directly from the browser.
-app.get("/api/vworld/wms", async (req, res) => {
-  const apiKey = process.env.VWORLD_API_KEY;
-  if (!apiKey) return res.status(400).json({ error: "VWORLD_API_KEY is not set in server/.env" });
-
-  const url = new URL("https://api.vworld.kr/req/wms");
-  for (const [k, v] of Object.entries(req.query)) url.searchParams.set(k, v);
-  url.searchParams.set("key", apiKey);
-
-  try {
-    const vworldRes = await fetch(url.toString());
-    const buf = Buffer.from(await vworldRes.arrayBuffer());
-    res.set("Content-Type", vworldRes.headers.get("content-type") || "image/png");
-    return res.send(buf);
-  } catch (err) {
-    return res.status(500).json({ error: err.message || "VWorld WMS request failed" });
-  }
-});
-
 app.get("/api/health", (_req, res) => res.json({ ok: true }));
 
 const PORT = process.env.PORT || 3001;
