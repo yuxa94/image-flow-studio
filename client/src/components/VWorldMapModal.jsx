@@ -12,6 +12,15 @@ const DEFAULT_LON = 127.027619;
 const DEFAULT_LAT = 37.497926;
 const DEFAULT_ALT = 1500;
 
+// VWorld's cadastral (지적도) WMS layer isn't actually broken at high camera
+// altitude — its server enforces a scale limit and starts returning valid
+// 200 OK but blank 1x1 tiles once the requested bbox gets too wide (verified
+// by hitting the proxy directly: bbox <= ~0.02deg returns real content,
+// > ~0.05deg returns an empty image). We can't override a server-side scale
+// rule, so instead we surface *why* the layer disappears once the camera
+// climbs past roughly the altitude where that bbox threshold is crossed.
+const CADASTRAL_MAX_HEIGHT = 3000;
+
 const toDeg = (rad) => (rad * 180) / Math.PI;
 const toRad = (deg) => (deg * Math.PI) / 180;
 
@@ -146,6 +155,7 @@ export default function VWorldMapModal() {
   const [searching, setSearching] = useState(false);
   const [capturing, setCapturing] = useState(false);
   const [showCadastral, setShowCadastral] = useState(false);
+  const [cadastralTooFar, setCadastralTooFar] = useState(false);
 
   const mapContainerRef = useRef(null);
   const stageRef = useRef(null);
@@ -525,6 +535,28 @@ export default function VWorldMapModal() {
     }
   }, [open]);
 
+  // While the cadastral layer is on, watch camera altitude so we can tell
+  // the user *why* it just disappeared instead of leaving it looking broken.
+  useEffect(() => {
+    const viewer = viewerRef.current;
+    if (!showCadastral || !viewer) {
+      setCadastralTooFar(false);
+      return;
+    }
+    const checkHeight = () => {
+      const height = viewer.camera.positionCartographic?.height ?? 0;
+      setCadastralTooFar(height > CADASTRAL_MAX_HEIGHT);
+    };
+    checkHeight();
+    viewer.camera.changed.addEventListener(checkHeight);
+    const prevPercentageChanged = viewer.camera.percentageChanged;
+    viewer.camera.percentageChanged = 0.05;
+    return () => {
+      viewer.camera.changed.removeEventListener(checkHeight);
+      viewer.camera.percentageChanged = prevPercentageChanged;
+    };
+  }, [showCadastral]);
+
   function handleAddModelFile(file) {
     if (!file) return;
     const url = URL.createObjectURL(file);
@@ -576,6 +608,8 @@ export default function VWorldMapModal() {
   // public SDK either — this adds/removes VWorld's public WMS cadastral
   // layer (lp_pa_cbnd_bubun) as a plain Cesium imagery layer instead,
   // proxied through the server since the WMS endpoint has no CORS headers.
+  // Note: the layer only renders close to the ground — see
+  // CADASTRAL_MAX_HEIGHT above for why, that's a server-side scale limit.
   function toggleCadastral(next) {
     setShowCadastral(next);
     const viewer = viewerRef.current;
@@ -829,6 +863,12 @@ export default function VWorldMapModal() {
                   />
                   Cadastral map (지적도)
                 </label>
+                {showCadastral && cadastralTooFar ? (
+                  <div className="hint">
+                    Hidden at this altitude — VWorld's server only renders parcel data when the camera is close to
+                    the ground. Zoom in to bring it back.
+                  </div>
+                ) : null}
               </>
             )}
 

@@ -48,9 +48,18 @@ REPLICATE_API_TOKEN=
   cadastral map (지적도, proxied through the server since VWorld's WMS has
   no CORS headers), and Capture writes the screenshot as this node's
   output at any of the same ratio presets Crop/Imagine use.
+  The cadastral layer only renders close to the ground — VWorld's own WMS
+  server enforces this (verified directly: it returns a real tile for a
+  small bbox but a blank 200 OK for a wide one), so it's a server-side
+  scale limit we can't override; the app shows a hint instead of just
+  leaving it looking broken once the camera climbs too high.
   Building-name/POI label visibility isn't exposed anywhere in VWorld's
-  public SDK (checked scene primitives, ground primitives, the DOM, and
-  3D-tileset styling) — no toggle for it exists here.
+  public SDK — confirmed by inspecting VWorld's own site, where it turns
+  out to be a completely separate, undocumented internal tile service
+  (`cdn.vworld.kr/TDServer/.../POI_BOUND/*.vctr`, a proprietary binary
+  format on a different host than the public API/SDK) baked into their own
+  page, not reachable through `window.vw`/`window.ws3d` — no toggle for it
+  exists here.
 - **Imagine** — the Gemini node. Connect a base image (required) and
   optionally a reference image, write a prompt, pick ratio/resolution, hit
   Generate. The "Edit" button opens a canvas to mark up the image
