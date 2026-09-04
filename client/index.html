@@ -4,6 +4,14 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Image Flow Studio</title>
+    <!--
+      VWorld's SDK uses document.write() internally to inject its actual
+      engine scripts, which only works during the browser's initial
+      synchronous HTML parse — it silently fails if injected dynamically
+      via JS after the page has already loaded. So this has to be a plain
+      static tag here, not something added at runtime from React.
+    -->
+    <script type="text/javascript" src="https://map.vworld.kr/js/webglMapInit.js.do?version=3.0&apiKey=%VWORLD_API_KEY%"></script>
   </head>
   <body>
     <div id="root"></div>

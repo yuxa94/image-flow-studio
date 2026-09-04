@@ -787,3 +787,137 @@ input.node-input {
   font-size: 13px;
 }
 
+/* VWorld 3D map modal */
+.vworld-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(5, 6, 8, 0.9);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1100;
+}
+
+.vworld-overlay[hidden] {
+  display: none;
+}
+
+.vworld-modal {
+  width: min(1300px, 96vw);
+  height: min(800px, 92vh);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6);
+}
+
+.vworld-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.vworld-body {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 240px 1fr;
+  min-height: 0;
+}
+
+.vworld-side {
+  border-right: 1px solid var(--border);
+  background: var(--panel);
+  padding: 12px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.vworld-stage {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  background: #000;
+}
+
+.vworld-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.vworld-canvas canvas {
+  width: 100% !important;
+  height: 100% !important;
+}
+
+.vworld-capture-guide {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.vworld-status {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2;
+  color: var(--text-dim);
+  font-size: 13px;
+  background: rgba(0, 0, 0, 0.5);
+}
+
+.vworld-footer {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--border);
+  background: var(--panel);
+}
+
+.vworld-fov {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.vworld-fov input[type="range"] {
+  width: 140px;
+}
+
+.vworld-fov span {
+  min-width: 32px;
+}
+
+.vworld-ratio {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.vworld-ratio .node-select {
+  width: 160px;
+}
+
+.vworld-capture-btn {
+  margin-left: auto;
+  min-width: 140px;
+}
+

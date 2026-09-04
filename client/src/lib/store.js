@@ -56,6 +56,14 @@ export const useStore = create((set, get) => ({
   openLightbox: (image) => set({ lightboxImage: image }),
   closeLightbox: () => set({ lightboxImage: null }),
 
+  // The VWorld 3D map is a page-wide singleton (its SDK can't be
+  // reinitialized once started), so the modal is mounted once at the App
+  // level and just toggled visible/hidden here rather than mounted per node.
+  vworldOpen: false,
+  vworldTargetNodeId: null,
+  openVWorldMap: (nodeId) => set({ vworldOpen: true, vworldTargetNodeId: nodeId }),
+  closeVWorldMap: () => set({ vworldOpen: false }),
+
   setSettings: (patch) => {
     const next = { ...get().settings, ...patch };
     set({ settings: next });

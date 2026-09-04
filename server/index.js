@@ -79,6 +79,39 @@ app.post("/api/generate", async (req, res) => {
   }
 });
 
+// Proxies VWorld's address search/geocoding API so the browser doesn't hit
+// CORS issues calling api.vworld.kr directly, and the key stays server-side.
+app.get("/api/vworld/search", async (req, res) => {
+  const apiKey = process.env.VWORLD_API_KEY;
+  if (!apiKey) return res.status(400).json({ error: "VWORLD_API_KEY is not set in server/.env" });
+
+  const query = req.query.query;
+  if (!query) return res.status(400).json({ error: "Missing query" });
+
+  const type = req.query.type === "place" ? "place" : "address";
+  const url = new URL("https://api.vworld.kr/req/search");
+  url.searchParams.set("service", "search");
+  url.searchParams.set("request", "search");
+  url.searchParams.set("version", "2.0");
+  url.searchParams.set("crs", "EPSG:4326");
+  url.searchParams.set("size", "10");
+  url.searchParams.set("page", "1");
+  url.searchParams.set("query", query);
+  url.searchParams.set("type", type);
+  if (type === "address") url.searchParams.set("category", "road");
+  url.searchParams.set("format", "json");
+  url.searchParams.set("errorformat", "json");
+  url.searchParams.set("key", apiKey);
+
+  try {
+    const vworldRes = await fetch(url.toString());
+    const json = await vworldRes.json();
+    return res.json(json);
+  } catch (err) {
+    return res.status(500).json({ error: err.message || "VWorld search request failed" });
+  }
+});
+
 app.get("/api/health", (_req, res) => res.json({ ok: true }));
 
 const PORT = process.env.PORT || 3001;

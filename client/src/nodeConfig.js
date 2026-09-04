@@ -11,6 +11,17 @@ export const PALETTE = [
     ],
   },
   {
+    section: "CONTEXT",
+    items: [
+      {
+        type: "vworld",
+        title: "VWorld",
+        subtitle: "3D map capture",
+        defaultData: () => ({ output: null }),
+      },
+    ],
+  },
+  {
     section: "GENERATOR",
     items: [
       {
