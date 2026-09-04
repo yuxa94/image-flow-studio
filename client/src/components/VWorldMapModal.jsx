@@ -80,17 +80,26 @@ export default function VWorldMapModal() {
     waitForVWorldSdk()
       .then((vw) => {
         if (cancelled) return;
-        const map = new vw.Map();
-        map.setOption({
-          mapId: "vworld-map-canvas",
-          initPosition: new vw.CameraPosition(
-            new vw.CoordZ(DEFAULT_LON, DEFAULT_LAT, DEFAULT_ALT),
-            new vw.Direction(0, -90, 0)
-          ),
-          logo: false,
-          navigation: true,
-        });
-        map.start();
+
+        // React 18 StrictMode (dev) mounts every component twice — mount,
+        // cleanup, mount again — to catch effects that aren't safe to
+        // re-run. VWorld's SDK defines window.ws3d.viewer as a
+        // non-redefinable property, so calling new vw.Map()/start() again
+        // on that second mount throws "Cannot redefine property: viewer".
+        // If a viewer is already up from the first pass, just reuse it.
+        if (!window.ws3d?.viewer) {
+          const map = new vw.Map();
+          map.setOption({
+            mapId: "vworld-map-canvas",
+            initPosition: new vw.CameraPosition(
+              new vw.CoordZ(DEFAULT_LON, DEFAULT_LAT, DEFAULT_ALT),
+              new vw.Direction(0, -90, 0)
+            ),
+            logo: false,
+            navigation: true,
+          });
+          map.start();
+        }
 
         // window.ws3d.viewer is the live Cesium Viewer once the map starts.
         const waitForViewer = (attempts = 0) => {
