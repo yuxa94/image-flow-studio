@@ -1,3 +1,4 @@
+import "dotenv/config";
 import express from "express";
 import cors from "cors";
 
@@ -14,7 +15,10 @@ const ROLE_LABELS = {
 
 // Body: { apiKey, model, prompt, images: [{ data (base64, no prefix), mimeType, role? }], ratio, resolution }
 app.post("/api/generate", async (req, res) => {
-  const { apiKey, model, prompt, images = [], ratio, resolution } = req.body || {};
+  const { model, prompt, images = [], ratio, resolution } = req.body || {};
+  // A key typed into Settings (client) wins; otherwise fall back to the
+  // server's own .env so the app can be used without pasting a key each run.
+  const apiKey = req.body?.apiKey || process.env.GEMINI_API_KEY;
 
   if (!apiKey) return res.status(400).json({ error: "Missing API key" });
   if (!model) return res.status(400).json({ error: "Missing model name" });
