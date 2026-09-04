@@ -169,6 +169,7 @@ export default function VWorldMapModal() {
   const dragRef = useRef(null);
   const modelsRef = useRef(models);
   const selectedModelIdRef = useRef(selectedModelId);
+  const pendingActionRef = useRef(pendingAction);
   const cadastralLayerRef = useRef(null);
 
   const ratioOption = RATIO_OPTIONS.find((r) => r.label === ratioLabel) || RATIO_OPTIONS[0];
@@ -180,6 +181,9 @@ export default function VWorldMapModal() {
   useEffect(() => {
     selectedModelIdRef.current = selectedModelId;
   }, [selectedModelId]);
+  useEffect(() => {
+    pendingActionRef.current = pendingAction;
+  }, [pendingAction]);
 
   // Runs exactly once for the lifetime of the app (this component is never
   // unmounted), which is required by the SDK's singleton viewer.
@@ -205,7 +209,7 @@ export default function VWorldMapModal() {
               new vw.Direction(0, -90, 0)
             ),
             logo: false,
-            navigation: true,
+            navigation: false,
           });
           map.start();
         }
@@ -509,6 +513,18 @@ export default function VWorldMapModal() {
         controller.enableInputs = true;
       }
     }, Cesium.ScreenSpaceEventType.LEFT_UP);
+
+    // Clicking anywhere that isn't a gizmo part deselects the current model
+    // (hides the gumball). Skipped while a place/move click is pending —
+    // that click-to-place/move handler (a separate listener) owns this
+    // click instead.
+    handler.setInputAction((movement) => {
+      if (pendingActionRef.current) return;
+      const picked = viewer.scene.pick(movement.position);
+      if (!picked?.id?.gizmoPart) {
+        setSelectedModelId(null);
+      }
+    }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
 
     gizmoHandlerRef.current = handler;
     return () => {
@@ -893,6 +909,16 @@ export default function VWorldMapModal() {
                 />
               ) : null}
             </div>
+            {screenshotMode ? (
+              <button
+                className="vworld-screenshot-exit"
+                onClick={() => setScreenshotMode(false)}
+                disabled={capturing}
+                title="Exit screenshot mode"
+              >
+                ✕
+              </button>
+            ) : null}
           </div>
         </div>
 
