@@ -42,11 +42,15 @@ REPLICATE_API_TOKEN=
 
 - **Image** — upload a local image, becomes an input for other nodes.
 - **VWorld** — opens a 3D map (real VWorld imagery/buildings). Search an
-  address or pan/zoom manually, optionally place `.glb` models by clicking
-  the globe, pick a capture ratio (matches Imagine/Crop's ratio list), and
-  Capture writes the screenshot as this node's output. Building-layer
-  toggles and cadastral-map overlay from VWorld's own web tool aren't
-  exposed by their public API/SDK, so they're not implemented here.
+  address or pan/zoom manually, place `.glb` models by clicking the globe
+  (each gets a black CAD-style edge outline, a yellow selection silhouette,
+  and a Rhino-Gumball-style move/rotate gizmo centered on it), toggle the
+  cadastral map (지적도, proxied through the server since VWorld's WMS has
+  no CORS headers), and Capture writes the screenshot as this node's
+  output at any of the same ratio presets Crop/Imagine use.
+  Building-name/POI label visibility isn't exposed anywhere in VWorld's
+  public SDK (checked scene primitives, ground primitives, the DOM, and
+  3D-tileset styling) — no toggle for it exists here.
 - **Imagine** — the Gemini node. Connect a base image (required) and
   optionally a reference image, write a prompt, pick ratio/resolution, hit
   Generate. The "Edit" button opens a canvas to mark up the image

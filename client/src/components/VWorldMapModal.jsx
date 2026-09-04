@@ -145,6 +145,7 @@ export default function VWorldMapModal() {
   const [searchResults, setSearchResults] = useState([]);
   const [searching, setSearching] = useState(false);
   const [capturing, setCapturing] = useState(false);
+  const [showCadastral, setShowCadastral] = useState(false);
 
   const mapContainerRef = useRef(null);
   const stageRef = useRef(null);
@@ -158,6 +159,7 @@ export default function VWorldMapModal() {
   const dragRef = useRef(null);
   const modelsRef = useRef(models);
   const selectedModelIdRef = useRef(selectedModelId);
+  const cadastralLayerRef = useRef(null);
 
   const ratioOption = RATIO_OPTIONS.find((r) => r.label === ratioLabel) || RATIO_OPTIONS[0];
   const selectedModel = models.find((m) => m.id === selectedModelId) || null;
@@ -270,6 +272,15 @@ export default function VWorldMapModal() {
         const addModel = (model) => {
           model.modelMatrix = modelMatrix;
           model.scale = 1;
+          // Always-on black CAD-style edges on every placed model (distinct
+          // from the yellow selection outline, which only shows up while
+          // the model is selected).
+          try {
+            model.silhouetteColor = Cesium.Color.BLACK;
+            model.silhouetteSize = 1.5;
+          } catch {
+            // unsupported in this Cesium build — the model still renders fine
+          }
           viewer.scene.primitives.add(model);
           const id = `model-${modelCounter++}`;
           setModels((prev) => [
@@ -278,6 +289,24 @@ export default function VWorldMapModal() {
           ]);
           setSelectedModelId(id);
           setPendingAction(null);
+
+          // model.boundingSphere isn't available the instant it's added —
+          // the gumball falls back to the ground click point until then,
+          // which can look badly off-center for a tall/offset building.
+          // Poll until the real bounding sphere is readable, then nudge
+          // state so the gizmo effect recomputes and recenters on it.
+          const waitReady = (attempts = 0) => {
+            try {
+              if (model.ready && model.boundingSphere) {
+                setModels((prev) => prev.map((m) => (m.id === id ? { ...m } : m)));
+                return;
+              }
+            } catch {
+              // not ready yet
+            }
+            if (attempts < 50) setTimeout(() => waitReady(attempts + 1), 100);
+          };
+          waitReady();
         };
         if (Cesium.Model.fromGltfAsync) {
           Cesium.Model.fromGltfAsync({ url: pendingAction.url, modelMatrix }).then(addModel);
@@ -543,6 +572,39 @@ export default function VWorldMapModal() {
     }
   }
 
+  // VWorld's own cadastral (지적도) toggle isn't exposed anywhere in the
+  // public SDK either — this adds/removes VWorld's public WMS cadastral
+  // layer (lp_pa_cbnd_bubun) as a plain Cesium imagery layer instead,
+  // proxied through the server since the WMS endpoint has no CORS headers.
+  function toggleCadastral(next) {
+    setShowCadastral(next);
+    const viewer = viewerRef.current;
+    const Cesium = cesiumRef.current;
+    if (!viewer || !Cesium) return;
+
+    if (next) {
+      if (cadastralLayerRef.current) return;
+      const provider = new Cesium.WebMapServiceImageryProvider({
+        url: `${window.location.origin}/api/vworld/wms`,
+        layers: "lp_pa_cbnd_bubun",
+        parameters: {
+          SERVICE: "WMS",
+          VERSION: "1.3.0",
+          REQUEST: "GetMap",
+          STYLES: "lp_pa_cbnd_bubun",
+          FORMAT: "image/png",
+          TRANSPARENT: true,
+        },
+        crs: "EPSG:4326",
+      });
+      cadastralLayerRef.current = viewer.imageryLayers.addImageryProvider(provider);
+    } else if (cadastralLayerRef.current) {
+      viewer.imageryLayers.remove(cadastralLayerRef.current);
+      cadastralLayerRef.current = null;
+    }
+    viewer.scene.requestRender();
+  }
+
   async function handleSearch() {
     if (!searchQuery.trim()) return;
     setSearching(true);
@@ -754,6 +816,19 @@ export default function VWorldMapModal() {
                     <span className="layer-name">{item?.address?.road || item?.address?.parcel || item?.title}</span>
                   </div>
                 ))}
+
+                <div className="layers-title" style={{ marginTop: 16 }}>
+                  Map layers
+                </div>
+                <label className="vworld-toggle">
+                  <input
+                    type="checkbox"
+                    checked={showCadastral}
+                    onChange={(e) => toggleCadastral(e.target.checked)}
+                    disabled={status !== "ready"}
+                  />
+                  Cadastral map (지적도)
+                </label>
               </>
             )}
 

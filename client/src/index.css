@@ -869,6 +869,19 @@ input.node-input {
   background: var(--panel-2);
 }
 
+.vworld-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  cursor: pointer;
+  padding: 4px 2px;
+}
+
+.vworld-toggle input {
+  accent-color: var(--accent);
+}
+
 .vworld-stage {
   position: relative;
   min-width: 0;
