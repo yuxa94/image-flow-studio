@@ -67,10 +67,10 @@ export default function ImagineNode({ id, data, selected }) {
       </div>
 
       <ImagePreview
-        src={data.output}
-        alt="output"
-        empty={data.baseImage ? "Ready to generate" : "Connect a base image ←"}
-        downloadable
+        src={data.output || data.baseImage}
+        alt={data.output ? "output" : "base"}
+        empty="Connect a base image ←"
+        downloadable={!!data.output}
         filename={`imagine-${id}.png`}
       />
 
