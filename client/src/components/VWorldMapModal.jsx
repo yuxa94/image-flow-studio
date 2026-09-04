@@ -242,10 +242,10 @@ export default function VWorldMapModal() {
             // Both guarded on window flags (not local refs) for the same
             // StrictMode-double-mount reason as the viewer init above —
             // adding either twice would draw doubled/overlapping edges.
-            try {
-              const Cesium = window.Cesium;
-              const viewer = window.ws3d.viewer;
+            const Cesium = window.Cesium;
+            const viewer = window.ws3d.viewer;
 
+            try {
               if (!window.__vworldAllEdges) {
                 const allEdges = Cesium.PostProcessStageLibrary.createEdgeDetectionStage();
                 allEdges.uniforms.color = Cesium.Color.BLACK;
@@ -280,9 +280,16 @@ export default function VWorldMapModal() {
             // Hooked once globally (guarded like the outline stages above)
             // and covers tilesets added later too, since VWorld streams in
             // new regional tilesets as the camera moves.
-            try {
-              if (!window.__vworldTileHideHook) {
-                const reapplyHiddenOnLoad = (tile) => {
+            if (!window.__vworldTileHideHook) {
+              // Guarded the same way as the outline stages above, but each
+              // per-primitive step has its own try/catch: one odd primitive
+              // (e.g. a Cesium3DTileset whose .tileLoad isn't set up yet at
+              // the instant primitiveAdded fires) must not throw out of the
+              // whole block and leave the flag unset — since this effect
+              // only ever runs once, that would silently disable hidden-
+              // building persistence for the rest of the session.
+              const reapplyHiddenOnLoad = (tile) => {
+                try {
                   const content = tile.content;
                   if (!content || typeof content.featuresLength !== "number") return;
                   for (let i = 0; i < content.featuresLength; i++) {
@@ -292,20 +299,28 @@ export default function VWorldMapModal() {
                       feature.show = false;
                     }
                   }
-                };
-                const hookTileset = (primitive) => {
-                  if (!(primitive instanceof Cesium.Cesium3DTileset) || primitive.__vworldHideHooked) return;
+                } catch (e) {
+                  console.warn("VWorld: re-applying hidden building on tile load failed", e);
+                }
+              };
+              const hookTileset = (primitive) => {
+                try {
+                  if (!(primitive instanceof Cesium.Cesium3DTileset) || primitive.__vworldHideHooked || !primitive.tileLoad) return;
                   primitive.__vworldHideHooked = true;
                   primitive.tileLoad.addEventListener(reapplyHiddenOnLoad);
-                };
+                } catch (e) {
+                  console.warn("VWorld: hooking tileset for hidden-building persistence failed", e);
+                }
+              };
+              try {
                 for (let i = 0; i < viewer.scene.primitives.length; i++) {
                   hookTileset(viewer.scene.primitives.get(i));
                 }
                 viewer.scene.primitives.primitiveAdded.addEventListener(hookTileset);
-                window.__vworldTileHideHook = true;
+              } catch (e) {
+                console.warn("VWorld: tile-reload hide hook unavailable", e);
               }
-            } catch (e) {
-              console.warn("VWorld: tile-reload hide hook unavailable", e);
+              window.__vworldTileHideHook = true;
             }
 
             setStatus("ready");
