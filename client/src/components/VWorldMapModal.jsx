@@ -321,10 +321,19 @@ export default function VWorldMapModal() {
                 }
               };
               try {
-                for (let i = 0; i < viewer.scene.primitives.length; i++) {
-                  hookTileset(viewer.scene.primitives.get(i));
-                }
-                viewer.scene.primitives.primitiveAdded.addEventListener(hookTileset);
+                // primitives.primitiveAdded isn't available on this
+                // bundled Cesium build's PrimitiveCollection (confirmed:
+                // it throws), so re-scan on every rendered frame instead —
+                // hookTileset() already no-ops on anything already tagged,
+                // so this is cheap, and it also covers tilesets VWorld
+                // creates later for regions the camera pans into.
+                const scanForNewTilesets = () => {
+                  for (let i = 0; i < viewer.scene.primitives.length; i++) {
+                    hookTileset(viewer.scene.primitives.get(i));
+                  }
+                };
+                scanForNewTilesets();
+                viewer.scene.postRender.addEventListener(scanForNewTilesets);
               } catch (e) {
                 console.warn("VWorld: tile-reload hide hook unavailable", e);
               }
