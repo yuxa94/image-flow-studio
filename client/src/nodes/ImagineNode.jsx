@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Handle, Position } from "@xyflow/react";
 import NodeShell from "./NodeShell.jsx";
 import { useStore } from "../lib/store.js";
@@ -17,18 +17,17 @@ export default function ImagineNode({ id, data, selected }) {
   const linkGeneratedImage = useStore((s) => s.linkGeneratedImage);
   const settings = useStore((s) => s.settings);
   const [editorOpen, setEditorOpen] = useState(false);
+  const generatingRef = useRef(false);
 
   async function handleGenerate() {
-    if (!settings.apiKey) {
-      updateNodeData(id, { error: "Set your Gemini API key in Settings (bottom right)." });
-      return;
-    }
+    if (generatingRef.current) return;
     const baseSrc = data.editedImage || data.baseImage;
     if (!baseSrc) {
       updateNodeData(id, { error: "Connect an image into the base input first." });
       return;
     }
 
+    generatingRef.current = true;
     updateNodeData(id, { loading: true, error: null });
 
     const images = [];
@@ -40,12 +39,13 @@ export default function ImagineNode({ id, data, selected }) {
     }
 
     try {
+      if (!baseRaw) throw new Error("기준 이미지 형식을 읽을 수 없습니다. 다시 캡처하거나 업로드해주세요.");
       const result = await generateImage({
         apiKey: settings.apiKey,
         model: settings.model,
         prompt: data.prompt || "",
         images,
-        ratio: data.ratio || "AUTO",
+        ratio: data.ratio && data.ratio !== "AUTO" ? data.ratio : data.baseRatio || "AUTO",
         resolution: data.resolution || "AUTO",
       });
       // the annotated edit is a one-shot instruction — clear it once consumed
@@ -54,6 +54,8 @@ export default function ImagineNode({ id, data, selected }) {
       linkGeneratedImage(id, result.image);
     } catch (err) {
       updateNodeData(id, { loading: false, error: err.message });
+    } finally {
+      generatingRef.current = false;
     }
   }
 
@@ -67,12 +69,14 @@ export default function ImagineNode({ id, data, selected }) {
       </div>
 
       <ImagePreview
-        src={data.output || data.baseImage}
-        alt={data.output ? "output" : "base"}
+        src={data.editedImage || data.baseImage}
+        alt="base"
         empty="Connect a base image ←"
-        downloadable={!!data.output}
+        downloadable={false}
         filename={`imagine-${id}.png`}
       />
+
+      {data.baseRatio ? <div className="hint">캡처 비율 {data.baseRatio} · AUTO 선택 시 이 비율로 생성합니다.</div> : null}
 
       <div className="handle-row">
         <Handle type="target" position={Position.Left} id="ref" />
@@ -137,9 +141,11 @@ export default function ImagineNode({ id, data, selected }) {
 
       {data.error ? <div className="error-text">{data.error}</div> : null}
 
-      <button className="btn node-footer-btn" onClick={handleGenerate} disabled={data.loading}>
+      <button className="btn node-footer-btn" onClick={handleGenerate} disabled={data.loading || !(data.editedImage || data.baseImage)}>
         {data.loading ? "Generating..." : "✨ Generate"}
       </button>
+
+      {data.output ? <><label>생성 결과</label><ImagePreview src={data.output} alt="output" downloadable filename={`imagine-${id}.png`} /></> : null}
 
       <Handle type="source" position={Position.Right} id="out" />
 

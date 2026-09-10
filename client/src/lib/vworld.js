@@ -126,3 +126,29 @@ export function createBuildingVisibility(scene) {
     },
   };
 }
+
+// Older SDK models only start loading once added to the scene.
+export async function loadSceneModel(Cesium, scene, options, timeoutMs = 30000) {
+  let model;
+  let expired = false;
+  let timer;
+  const loading = (async () => {
+    model = Cesium.Model.fromGltfAsync
+      ? await Cesium.Model.fromGltfAsync(options)
+      : Cesium.Model.fromGltf(options);
+    if (expired) { model.destroy?.(); throw new Error('Model loading timed out'); }
+    scene.primitives.add(model);
+    if (model.readyPromise) await model.readyPromise;
+    return model;
+  })();
+  try {
+    return await Promise.race([loading, new Promise((_, reject) => {
+      timer = setTimeout(() => { expired = true; reject(new Error('모델 로딩 시간이 초과되었습니다. 파일을 확인하고 다시 시도해주세요.')); }, timeoutMs);
+    })]);
+  } catch (err) {
+    if (model) scene.primitives.remove(model);
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}

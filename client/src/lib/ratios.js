@@ -15,3 +15,11 @@ export const ASPECT_RATIOS = [
 ];
 
 export const ASPECT_RATIO_LABELS = ASPECT_RATIOS.map((r) => r.label);
+
+// Percent coordinates relative to the actual map viewport, not a square.
+export function fitCaptureRect(ratio, width, height) {
+  if (!ratio || width <= 0 || height <= 0) return { xPct: 0, yPct: 0, wPct: 1, hPct: 1 };
+  const w = Math.min(width, height * ratio);
+  const h = w / ratio;
+  return { xPct: (width - w) / 2 / width, yPct: (height - h) / 2 / height, wPct: w / width, hPct: h / height };
+}

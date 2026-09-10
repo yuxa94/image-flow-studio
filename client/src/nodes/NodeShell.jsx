@@ -5,7 +5,7 @@ export default function NodeShell({ title, badge, children, selected }) {
         <span>{title}</span>
         {badge ? <span className="badge">{badge}</span> : null}
       </div>
-      <div className="rf-node-body">{children}</div>
+      <div className="rf-node-body nodrag nowheel">{children}</div>
     </div>
   );
 }

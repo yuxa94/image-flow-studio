@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { createBuildingVisibility, waitForVWorldSdk } from "../lib/vworld.js";
+import { createBuildingVisibility, loadSceneModel, waitForVWorldSdk } from "../lib/vworld.js";
 import { cropImage } from "../lib/imageUtils.js";
-import { ASPECT_RATIOS } from "../lib/ratios.js";
+import { ASPECT_RATIOS, fitCaptureRect } from "../lib/ratios.js";
 import { useStore } from "../lib/store.js";
 
 const RATIO_OPTIONS = [{ label: "AUTO (full view)", value: null }, ...ASPECT_RATIOS];
@@ -14,22 +14,6 @@ const DEFAULT_ALT = 1500;
 
 const toDeg = (rad) => (rad * 180) / Math.PI;
 const toRad = (deg) => (deg * Math.PI) / 180;
-
-function fitBoxForRatio(ratio, containerW, containerH) {
-  if (!ratio) return { xPct: 0, yPct: 0, wPct: 1, hPct: 1 };
-  let w = containerH * ratio;
-  let h = containerH;
-  if (w > containerW) {
-    w = containerW;
-    h = containerW / ratio;
-  }
-  return {
-    xPct: (containerW - w) / 2 / containerW,
-    yPct: (containerH - h) / 2 / containerH,
-    wPct: w / containerW,
-    hPct: h / containerH,
-  };
-}
 
 function clamp(v, min, max) {
   return Math.min(max, Math.max(min, v));
@@ -153,6 +137,11 @@ export default function VWorldMapModal() {
   const [searchResults, setSearchResults] = useState([]);
   const [searching, setSearching] = useState(false);
   const [capturing, setCapturing] = useState(false);
+  const [modelLoading, setModelLoading] = useState(false);
+  const [frameEditing, setFrameEditing] = useState(false);
+  const modelLoadTokenRef = useRef(0);
+  const modelBusyRef = useRef(false);
+  const captureBusyRef = useRef(false);
   const [showBuildings, setShowBuildings] = useState(true);
   const [showBuildingNames, setShowBuildingNames] = useState(true);
   const [hideBuildingError, setHideBuildingError] = useState(null);
@@ -308,13 +297,14 @@ export default function VWorldMapModal() {
     if (!viewer || !Cesium) return;
 
     if (clickHandlerRef.current) {
-      clickHandlerRef.current.destroy();
+      if (!clickHandlerRef.current.isDestroyed()) clickHandlerRef.current.destroy();
       clickHandlerRef.current = null;
     }
-    if (!pendingAction) return;
+    if (!pendingAction || !open || screenshotMode) return;
 
     const handler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
-    handler.setInputAction((movement) => {
+    handler.setInputAction(async (movement) => {
+      if (modelBusyRef.current) return;
       if (pendingAction.type === "hideBuilding") {
         // A real VWorld building is a Cesium3DTileFeature (has .show and
         // .getProperty), unlike our own placed .glb models (plain Model
@@ -334,45 +324,37 @@ export default function VWorldMapModal() {
         return; // stays in hideBuilding mode for the next click
       }
 
-      const cartesian = viewer.camera.pickEllipsoid(movement.position, viewer.scene.globe.ellipsoid);
+      const ray = viewer.camera.getPickRay(movement.position);
+      const cartesian = ray && viewer.scene.globe.pick(ray, viewer.scene);
+      if (!cartesian) setError("지형이 로드된 위치를 클릭해주세요.");
       if (!cartesian) return;
 
       if (pendingAction.type === "place") {
-        const modelMatrix = composeMatrix(Cesium, cartesian, 0, 0, 0);
-        const addModel = (model) => {
-          model.modelMatrix = modelMatrix;
-          model.scale = 1;
-          viewer.scene.primitives.add(model);
+        const token = ++modelLoadTokenRef.current;
+        modelBusyRef.current = true;
+        setModelLoading(true);
+        setError(null);
+        try {
+          const modelMatrix = composeMatrix(Cesium, cartesian, 0, 0, 0);
+          const model = await loadSceneModel(Cesium, viewer.scene, { url: pendingAction.url, modelMatrix });
+          if (token !== modelLoadTokenRef.current) {
+            viewer.scene.primitives.remove(model);
+            return;
+          }
           const id = `model-${modelCounter++}`;
-          setModels((prev) => [
-            ...prev,
-            { id, name: pendingAction.name, primitive: model, position: cartesian, heading: 0, pitch: 0, roll: 0, scale: 1 },
-          ]);
+          setModels((prev) => [...prev, { id, name: pendingAction.name, primitive: model,
+            position: cartesian, heading: 0, pitch: 0, roll: 0, scale: 1 }]);
           setSelectedModelId(id);
-          setPendingAction(null);
-
-          // model.boundingSphere isn't available the instant it's added —
-          // the gumball falls back to the ground click point until then,
-          // which can look badly off-center for a tall/offset building.
-          // Poll until the real bounding sphere is readable, then nudge
-          // state so the gizmo effect recomputes and recenters on it.
-          const waitReady = (attempts = 0) => {
-            try {
-              if (model.ready && model.boundingSphere) {
-                setModels((prev) => prev.map((m) => (m.id === id ? { ...m } : m)));
-                return;
-              }
-            } catch {
-              // not ready yet
-            }
-            if (attempts < 50) setTimeout(() => waitReady(attempts + 1), 100);
-          };
-          waitReady();
-        };
-        if (Cesium.Model.fromGltfAsync) {
-          Cesium.Model.fromGltfAsync({ url: pendingAction.url, modelMatrix }).then(addModel);
-        } else {
-          addModel(Cesium.Model.fromGltf({ url: pendingAction.url, modelMatrix }));
+          viewer.scene.requestRender();
+        } catch (err) {
+          console.warn("VWorld: model loading failed", err);
+          if (token === modelLoadTokenRef.current) setError(`“${pendingAction.name}”을 불러오지 못했습니다. 텍스처가 포함된 올바른 GLB 파일인지 확인하고 다시 올려주세요.`);
+        } finally {
+          if (token === modelLoadTokenRef.current) {
+            modelBusyRef.current = false;
+            setModelLoading(false);
+            setPendingAction(null);
+          }
         }
       } else if (pendingAction.type === "move") {
         setModels((prev) =>
@@ -388,9 +370,10 @@ export default function VWorldMapModal() {
 
     clickHandlerRef.current = handler;
     return () => {
-      handler.destroy();
+      if (!handler.isDestroyed()) handler.destroy();
+      if (clickHandlerRef.current === handler) clickHandlerRef.current = null;
     };
-  }, [pendingAction]);
+  }, [pendingAction, open, screenshotMode, status]);
 
   // Builds (or, for an already-built gizmo on the same model, repositions
   // in place) the gumball arrows/rings for the selected model, and keeps
@@ -402,7 +385,7 @@ export default function VWorldMapModal() {
 
     const model = models.find((m) => m.id === selectedModelId);
 
-    if (!model) {
+    if (!model || screenshotMode || !open) {
       if (gizmoRef.current) {
         Object.values(gizmoRef.current.entities).forEach((e) => viewer.entities.remove(e));
         gizmoRef.current = null;
@@ -472,7 +455,7 @@ export default function VWorldMapModal() {
     }
 
     if (outlineStageRef.current) outlineStageRef.current.selected = [model.primitive];
-  }, [selectedModelId, models]);
+  }, [selectedModelId, models, screenshotMode, open, status]);
 
   // Drag-to-translate (arrows) / drag-to-rotate (rings) on the gumball.
   useEffect(() => {
@@ -481,10 +464,10 @@ export default function VWorldMapModal() {
     if (!viewer || !Cesium) return;
 
     if (gizmoHandlerRef.current) {
-      gizmoHandlerRef.current.destroy();
+      if (!gizmoHandlerRef.current.isDestroyed()) gizmoHandlerRef.current.destroy();
       gizmoHandlerRef.current = null;
     }
-    if (!selectedModelId) return;
+    if (!selectedModelId || screenshotMode || !open) return;
 
     const handler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
     const controller = viewer.scene.screenSpaceCameraController;
@@ -502,7 +485,6 @@ export default function VWorldMapModal() {
       const ray = viewer.camera.getPickRay(movement.position);
       if (!ray) return;
 
-      controller.enableInputs = false;
 
       if (part.type === "translate") {
         const axisDir = basis[part.axis];
@@ -525,6 +507,7 @@ export default function VWorldMapModal() {
           startRoll: model.roll,
         };
       }
+      controller.enableInputs = false;
     }, Cesium.ScreenSpaceEventType.LEFT_DOWN);
 
     handler.setInputAction((movement) => {
@@ -575,10 +558,12 @@ export default function VWorldMapModal() {
 
     gizmoHandlerRef.current = handler;
     return () => {
-      handler.destroy();
-      if (controller) controller.enableInputs = true;
+      if (!handler.isDestroyed()) handler.destroy();
+      if (gizmoHandlerRef.current === handler) gizmoHandlerRef.current = null;
+      dragRef.current = null;
+      controller.enableInputs = true;
     };
-  }, [selectedModelId]);
+  }, [selectedModelId, screenshotMode, open, status]);
 
   // Cesium sizes its canvas off window 'resize' events, which don't fire
   // when this modal's container goes from display:none back to visible —
@@ -595,6 +580,9 @@ export default function VWorldMapModal() {
     if (!open) {
       setScreenshotMode(false);
       setPendingAction(null);
+      modelLoadTokenRef.current++;
+      modelBusyRef.current = false;
+      setModelLoading(false);
     }
   }, [open]);
 
@@ -611,10 +599,33 @@ export default function VWorldMapModal() {
     }
     const stage = stageRef.current;
     if (!stage) return;
-    const box = stage.getBoundingClientRect();
-    setCaptureRect(fitBoxForRatio(ratioOption.value, box.width, box.height));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    const fit = () => {
+      const box = stage.getBoundingClientRect();
+      if (box.width && box.height) setCaptureRect(fitCaptureRect(ratioOption.value, box.width, box.height));
+    };
+    fit();
+    const observer = new ResizeObserver(fit);
+    observer.observe(stage);
+    return () => observer.disconnect();
   }, [screenshotMode, ratioLabel]);
+
+  useEffect(() => {
+    if (pendingAction?.type !== "place") return;
+    const url = pendingAction.url;
+    return () => URL.revokeObjectURL(url);
+  }, [pendingAction]);
+
+  useEffect(() => {
+    if (!open) return;
+    const escape = (e) => {
+      if (e.key !== "Escape" || capturing || modelLoading) return;
+      if (pendingAction) setPendingAction(null);
+      else if (screenshotMode) setScreenshotMode(false);
+      else closeVWorldMap();
+    };
+    window.addEventListener("keydown", escape);
+    return () => window.removeEventListener("keydown", escape);
+  }, [open, pendingAction, screenshotMode, capturing, modelLoading, closeVWorldMap]);
 
   function capturePointFromEvent(e) {
     const box = stageRef.current.getBoundingClientRect();
@@ -698,6 +709,11 @@ export default function VWorldMapModal() {
 
   function handleAddModelFile(file) {
     if (!file) return;
+    if (!file.name.toLowerCase().endsWith(".glb")) {
+      setError("텍스처가 포함된 .glb 파일을 선택해주세요. .gltf는 GLB로 변환 후 올릴 수 있습니다.");
+      return;
+    }
+    setError(null);
     const url = URL.createObjectURL(file);
     setPendingAction({ type: "place", name: file.name, url });
   }
@@ -797,12 +813,15 @@ export default function VWorldMapModal() {
   }
 
   async function handleSearch() {
-    if (!searchQuery.trim()) return;
+    if (!searchQuery.trim() || searching) return;
     setSearching(true);
     setSearchResults([]);
     try {
       const res = await fetch(`/api/vworld/search?query=${encodeURIComponent(searchQuery)}`);
       const json = await res.json();
+      if (!res.ok || json?.response?.status === "ERROR") {
+        throw new Error(json.error || json?.response?.error?.text || "주소 검색에 실패했습니다.");
+      }
       const items = json?.response?.result?.items || [];
       setSearchResults(items);
       if (!items.length) setError("No address results found.");
@@ -828,36 +847,43 @@ export default function VWorldMapModal() {
 
   async function handleCapture() {
     const viewer = viewerRef.current;
-    if (!viewer || !targetNodeId) return;
+    if (!viewer || !targetNodeId || captureBusyRef.current) return;
+    captureBusyRef.current = true;
+    setError(null);
     setCapturing(true);
     try {
       // window.ws3d.viewer.scene.canvas can be a stale/detached 0x0 canvas —
       // VWorld swaps in the real WebGL canvas as a plain child of the map
       // div, so grab that one directly instead of trusting the viewer ref.
       const canvas = mapContainerRef.current?.querySelector("canvas") || viewer.scene.canvas;
+      viewer.resize();
       viewer.render();
+      if (!canvas?.width || !canvas?.height) throw new Error("지도가 아직 준비되지 않았습니다. 잠시 후 다시 캡처해주세요.");
       const fullDataUrl = canvas.toDataURL("image/png");
 
       let result = fullDataUrl;
       if (ratioOption.value && captureRect) {
         result = await cropImage(fullDataUrl, captureRect);
       }
+      if (!result.startsWith("data:image/")) throw new Error("캡처 이미지를 만들지 못했습니다.");
+      useStore.getState().updateNodeData(targetNodeId, { captureRatio: ratioOption.value ? ratioLabel : null });
       setNodeOutput(targetNodeId, result);
       setScreenshotMode(false);
       closeVWorldMap();
     } catch (err) {
       setError(err.message);
     } finally {
+      captureBusyRef.current = false;
       setCapturing(false);
     }
   }
 
   return createPortal(
     <div className="vworld-overlay" hidden={!open}>
-      <div className="vworld-modal">
+      <div className="vworld-modal" role="dialog" aria-modal="true" aria-label="VWorld 3D 지도">
         <div className="vworld-header">
-          <span>VWorld — 3D Map</span>
-          <button className="editcanvas-close" onClick={closeVWorldMap} title="Close">
+          <span>VWorld 3D 지도</span><span className="vworld-step">{screenshotMode ? "2. 비율 선택 및 캡처" : "1. 지도와 모델 편집"}</span>
+          <button className="editcanvas-close" onClick={closeVWorldMap} disabled={capturing || modelLoading} title="Close">
             ✕
           </button>
         </div>
@@ -866,33 +892,39 @@ export default function VWorldMapModal() {
           <div className="vworld-side">
             {screenshotMode ? (
               <>
-                <div className="layers-title">Screenshot mode</div>
+                <div className="layers-title">캡처 영역</div>
                 <div className="hint">
-                  Pick a ratio below and pan/zoom the map to frame the shot, then Capture. Cancel to go back to
-                  editing.
+                  이미지 비율을 선택하고 지도를 이동해 구도를 맞추세요. 캡처한 이미지는 VWorld 노드와 연결된 Imagine에 전달됩니다.
                 </div>
+                <button className="btn secondary" aria-pressed={frameEditing} onClick={() => setFrameEditing(v => !v)} disabled={!ratioOption.value}>
+                  {frameEditing ? "지도 이동으로 전환" : "캡처 영역 이동 / 크기 조절"}
+                </button>
+                <div className="hint">{frameEditing ? "테두리 안을 드래그해 이동하고, 모서리로 크기를 조절하세요." : "마우스로 지도를 이동하고 휠로 확대 / 축소하세요."}</div>
               </>
             ) : (
               <>
-                <div className="layers-title">Model placement ({models.length})</div>
+                <div className="layers-title">모델 배치 ({models.length})</div>
                 <input
                   ref={fileInputRef}
                   type="file"
-                  accept=".glb,.gltf"
+                  accept=".glb"
                   style={{ display: "none" }}
                   onChange={(e) => {
                     handleAddModelFile(e.target.files?.[0]);
                     e.target.value = "";
                   }}
                 />
-                <button className="btn secondary" onClick={() => fileInputRef.current?.click()} disabled={status !== "ready"}>
-                  + Add .glb model
+                <button className="btn secondary" onClick={() => fileInputRef.current?.click()} disabled={status !== "ready" || modelLoading}>
+                  + 3D 모델 올리기 (.glb)
                 </button>
                 {pendingAction?.type === "place" ? (
-                  <div className="hint">Click on the map to place "{pendingAction.name}"...</div>
+                  <div className="hint">지도 위를 클릭해 “{pendingAction.name}”을 배치하세요.</div>
                 ) : null}
-                {pendingAction?.type === "move" ? <div className="hint">Click on the map to move the model...</div> : null}
+                {pendingAction?.type === "move" ? <div className="hint">지도 위를 클릭해 모델을 이동하세요.</div> : null}
 
+                {modelLoading ? <div className="hint" role="status">모델을 불러오는 중…</div> : null}
+                {pendingAction && !modelLoading ? <button className="btn secondary" onClick={() => setPendingAction(null)}>작업 취소 (Esc)</button> : null}
+                {!models.length && !pendingAction ? <div className="hint">GLB 파일을 올린 뒤 지도 위를 클릭해 배치하세요. 지도는 모든 VWorld 노드가 공유합니다.</div> : null}
                 {models.map((m) => (
                   <div
                     className={`layer-row vworld-model-row${m.id === selectedModelId ? " selected" : ""}`}
@@ -933,8 +965,8 @@ export default function VWorldMapModal() {
                       onClick={() => setPendingAction({ type: "move", modelId: selectedModel.id })}
                     >
                       {pendingAction?.type === "move" && pendingAction.modelId === selectedModel.id
-                        ? "Click map to place..."
-                        : "📍 Move (click map)"}
+                        ? "이동할 위치를 클릭하세요"
+                        : "모델 이동 (지도 클릭)"}
                     </button>
 
                     <label>Heading {Math.round(toDeg(selectedModel.heading))}°</label>
@@ -978,13 +1010,13 @@ export default function VWorldMapModal() {
                       className="btn secondary"
                       onClick={() => updateTransform(selectedModel.id, { heading: 0, pitch: 0, roll: 0, scale: 1 })}
                     >
-                      Reset transform
+                      변형 초기화
                     </button>
                   </div>
                 ) : null}
 
                 <div className="layers-title" style={{ marginTop: 16 }}>
-                  Address search
+                  주소 검색
                 </div>
                 <div className="row">
                   <input
@@ -1005,36 +1037,36 @@ export default function VWorldMapModal() {
                 ))}
 
                 <div className="layers-title" style={{ marginTop: 16 }}>
-                  Map layers
+                  지도 레이어
                 </div>
                 <label className="vworld-toggle">
                   <input
                     type="checkbox"
                     checked={showBuildings}
                     onChange={(e) => toggleBuildings(e.target.checked)}
-                    disabled={status !== "ready"}
+                    disabled={status !== "ready" || modelLoading}
                   />
-                  3D buildings
+                  3D 건물
                 </label>
                 <label className="vworld-toggle">
                   <input
                     type="checkbox"
                     checked={showBuildingNames}
                     onChange={(e) => toggleBuildingNames(e.target.checked)}
-                    disabled={status !== "ready"}
+                    disabled={status !== "ready" || modelLoading}
                   />
-                  Building names
+                  건물 이름
                 </label>
 
                 <div className="layers-title" style={{ marginTop: 16 }}>
-                  Hide buildings ({hiddenBuildings.length})
+                  건물 숨기기 ({hiddenBuildings.length})
                 </div>
                 <button
                   className="btn secondary"
                   onClick={() => setPendingAction((prev) => (prev?.type === "hideBuilding" ? null : { type: "hideBuilding" }))}
-                  disabled={status !== "ready"}
+                  disabled={status !== "ready" || modelLoading}
                 >
-                  {pendingAction?.type === "hideBuilding" ? "Click buildings to hide (click again to stop)" : "🏢 Hide building (click map)"}
+                  {pendingAction?.type === "hideBuilding" ? "숨길 건물을 클릭하세요" : "건물 선택해 숨기기"}
                 </button>
                 {hideBuildingError ? <p role="status">{hideBuildingError}</p> : null}
                 {hiddenBuildings.map((b) => (
@@ -1047,7 +1079,7 @@ export default function VWorldMapModal() {
                 ))}
                 {hiddenBuildings.length > 1 ? (
                   <button className="btn secondary" onClick={restoreAllBuildings}>
-                    Restore all
+                    모두 복원
                   </button>
                 ) : null}
               </>
@@ -1060,13 +1092,14 @@ export default function VWorldMapModal() {
             {status === "loading" ? <div className="vworld-status">Loading VWorld map...</div> : null}
             {status === "error" ? <div className="vworld-status error-text">{error}</div> : null}
             <div id="vworld-map-canvas" ref={mapContainerRef} className="vworld-canvas" />
-            <div className="vworld-capture-guide" ref={stageRef}>
+            <div className={`vworld-capture-guide${frameEditing ? " editing" : ""}`} ref={stageRef}>
               {captureRect ? (
                 <div
                   className="crop-rect"
                   onPointerDown={startCaptureMove}
                   onPointerMove={handleCaptureDragMove}
                   onPointerUp={endCaptureDrag}
+                  onPointerCancel={endCaptureDrag}
                   style={{
                     left: `${captureRect.xPct * 100}%`,
                     top: `${captureRect.yPct * 100}%`,
@@ -1081,6 +1114,7 @@ export default function VWorldMapModal() {
                       onPointerDown={startCaptureResize(c)}
                       onPointerMove={handleCaptureDragMove}
                       onPointerUp={endCaptureDrag}
+                      onPointerCancel={endCaptureDrag}
                     />
                   ))}
                 </div>
@@ -1101,8 +1135,8 @@ export default function VWorldMapModal() {
 
         <div className="vworld-footer">
           <div className="vworld-fov">
-            <label>FOV</label>
-            <input type="range" min="10" max="120" value={fov} onChange={(e) => applyFov(Number(e.target.value))} />
+            <label htmlFor="vworld-fov">화각</label>
+            <input id="vworld-fov" type="range" min="10" max="120" value={fov} onChange={(e) => applyFov(Number(e.target.value))} />
             <span>{fov}°</span>
             <button className="btn secondary" onClick={() => applyFov(60)} title="Reset FOV">
               ⟲
@@ -1112,8 +1146,8 @@ export default function VWorldMapModal() {
           {screenshotMode ? (
             <>
               <div className="vworld-ratio">
-                <label>Capture ratio</label>
-                <select className="node-select" value={ratioLabel} onChange={(e) => setRatioLabel(e.target.value)}>
+                <label htmlFor="capture-ratio">이미지 비율</label>
+                <select id="capture-ratio" className="node-select" disabled={capturing} value={ratioLabel} onChange={(e) => setRatioLabel(e.target.value)}>
                   {RATIO_OPTIONS.map((r) => (
                     <option key={r.label} value={r.label}>
                       {r.label}
@@ -1122,19 +1156,19 @@ export default function VWorldMapModal() {
                 </select>
               </div>
               <button className="btn secondary" onClick={() => setScreenshotMode(false)} disabled={capturing}>
-                Cancel
+                편집으로 돌아가기
               </button>
               <button className="btn vworld-capture-btn" onClick={handleCapture} disabled={status !== "ready" || capturing}>
-                {capturing ? "Capturing..." : "✓ Take Screenshot"}
+                {capturing ? "Capturing..." : "캡처 저장"}
               </button>
             </>
           ) : (
             <button
               className="btn vworld-capture-btn"
-              onClick={() => setScreenshotMode(true)}
-              disabled={status !== "ready"}
+              onClick={() => { setPendingAction(null); setFrameEditing(false); setError(null); setScreenshotMode(true); }}
+              disabled={status !== "ready" || modelLoading}
             >
-              📷 Capture
+              비율 선택 및 캡처
             </button>
           )}
         </div>

@@ -15,7 +15,7 @@ export default function SettingsPanel() {
           <input
             className="node-input"
             type="password"
-            placeholder="Paste your API key"
+            placeholder="서버에 설정되어 있으면 생략 가능"
             value={settings.apiKey}
             onChange={(e) => setSettings({ apiKey: e.target.value })}
           />

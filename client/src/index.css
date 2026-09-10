@@ -984,3 +984,43 @@ input.node-input {
   min-width: 140px;
 }
 
+
+/* Map workflow: keep editing controls outside the captured canvas. */
+.vworld-step { margin-left: auto; color: var(--accent); font-size: 12px; }
+.vworld-header .editcanvas-close { flex-shrink: 0; }
+.vworld-side .hint { line-height: 1.65; }
+.vworld-side .layers-title { font-size: 11px; }
+.vworld-footer { flex-wrap: wrap; gap: 12px; }
+.vworld-capture-guide { overflow: hidden; }
+.vworld-capture-guide:not(.editing) .crop-rect { pointer-events: none; cursor: default; }
+.vworld-capture-guide:not(.editing) .crop-handle { display: none; }
+.vworld-capture-guide.editing .crop-rect { touch-action: none; }
+.vworld-capture-guide .crop-rect { box-shadow: 0 0 0 9999px rgba(0, 0, 0, .4); }
+.vworld-capture-guide .crop-handle { width: 18px; height: 18px; touch-action: none; }
+.rf-node { overflow: visible; }
+.rf-node-header { border-radius: 12px 12px 0 0; cursor: grab; }
+.react-flow__controls button { background: var(--panel); color: var(--text); border-color: var(--border); }
+.react-flow__controls button:hover { background: var(--panel-2); }
+.react-flow__controls button svg { fill: currentColor; }
+.workflow-start { position: absolute; top: 36%; left: 50%; transform: translate(-50%, -50%); width: min(460px, 85%); text-align: center; }
+.workflow-start h2 { font-size: 25px; font-weight: 600; letter-spacing: -.04em; }
+.workflow-start p { color: var(--text-dim); line-height: 1.8; }
+.workflow-start .btn { width: auto; padding: 12px 22px; margin: 12px 0; }
+button:focus-visible, select:focus-visible, input:focus-visible, textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+@media (max-width: 800px) {
+  .sidebar { width: 160px; }
+  .vworld-modal { width: 100vw; height: 100dvh; border-radius: 0; }
+  .vworld-body { grid-template-columns: 190px minmax(0, 1fr); }
+  .vworld-side { padding: 10px; }
+  .vworld-fov input[type="range"] { width: 80px; }
+  .vworld-ratio .node-select { width: 110px; }
+  .vworld-capture-btn { min-width: 120px; }
+}
+@media (max-width: 540px) {
+  .vworld-body { grid-template-columns: 1fr; grid-template-rows: minmax(0, 1fr) 150px; }
+  .vworld-stage { grid-row: 1; }
+  .vworld-side { grid-row: 2; border-right: 0; border-top: 1px solid var(--border); }
+  .vworld-step { font-size: 10px; }
+  .vworld-footer { padding: 8px; gap: 8px; }
+  .vworld-fov { width: 100%; }
+}

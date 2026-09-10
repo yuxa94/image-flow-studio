@@ -47,10 +47,40 @@ export function nextId(prefix) {
   return `${prefix}-${idCounter++}-${Math.floor(Math.random() * 1e6)}`;
 }
 
+// Synchronize every connected handle, including removed connections. Image
+// relay nodes are evaluated upstream first; a visited set bounds legacy cycles.
+function syncInputs(nodes, edges, previousEdges = edges) {
+  const byId = new Map(nodes.map(n => [n.id, { ...n, data: { ...n.data } }]));
+  const visited = new Set();
+  function visit(id) {
+    if (visited.has(id)) return;
+    visited.add(id);
+    const node = byId.get(id);
+    if (!node) return;
+    const handles = new Set([...edges, ...previousEdges].filter(e => e.target === id).map(e => e.targetHandle));
+    for (const handle of handles) {
+      const edge = edges.find(e => e.target === id && e.targetHandle === handle);
+      if (edge) visit(edge.source);
+      const source = edge && byId.get(edge.source);
+      const image = source?.data.output ?? source?.data.image ?? null;
+      const field = HANDLE_TO_FIELD[handle] || 'input';
+      if (field === 'baseImage') {
+        if (node.data[field] !== image) node.data.editedImage = null;
+        node.data.baseRatio = image ? source?.data.captureRatio || null : null;
+      }
+      node.data[field] = image;
+    }
+  }
+  nodes.forEach(n => visit(n.id));
+  return nodes.map(n => byId.get(n.id));
+}
+
+const hotState = import.meta.hot ? window.__imageFlowStore?.getState() : null;
+
 export const useStore = create((set, get) => ({
   settings: loadSettings(),
-  nodes: [],
-  edges: [],
+  nodes: hotState?.nodes || [],
+  edges: hotState?.edges || [],
   lightboxImage: null,
 
   openLightbox: (image) => set({ lightboxImage: image }),
@@ -75,20 +105,56 @@ export const useStore = create((set, get) => ({
   },
 
   onNodesChange: (changes) => {
-    set({ nodes: applyNodeChanges(changes, get().nodes) });
+    const state = get();
+    const nodes = applyNodeChanges(changes, state.nodes);
+    const ids = new Set(nodes.map(n => n.id));
+    const edges = state.edges.filter(e => ids.has(e.source) && ids.has(e.target));
+    set({ nodes: syncInputs(nodes, edges, state.edges), edges });
   },
 
   onEdgesChange: (changes) => {
-    set({ edges: applyEdgeChanges(changes, get().edges) });
+    const state = get();
+    const edges = applyEdgeChanges(changes, state.edges);
+    set({ edges, nodes: syncInputs(state.nodes, edges, state.edges) });
+  },
+
+  isValidConnection: ({ source, target }) => {
+    const { nodes, edges } = get();
+    if (source === target || !nodes.some(n => n.id === source) || !nodes.some(n => n.id === target)) return false;
+    const seen = new Set();
+    const queue = [target];
+    while (queue.length) {
+      const id = queue.pop();
+      if (id === source) return false;
+      if (seen.has(id)) continue;
+      seen.add(id);
+      edges.filter(e => e.source === id).forEach(e => queue.push(e.target));
+    }
+    return true;
   },
 
   onConnect: (connection) => {
-    set({ edges: addEdge({ ...connection, animated: false }, get().edges) });
-    get().propagateFrom(connection.source);
+    if (!get().isValidConnection(connection)) return;
+    const state = get();
+    const edges = addEdge({ ...connection, animated: false }, state.edges.filter(e =>
+      e.target !== connection.target || e.targetHandle !== connection.targetHandle));
+    set({ edges, nodes: syncInputs(state.nodes, edges, state.edges) });
   },
 
   addNode: (node) => {
     set({ nodes: [...get().nodes, node] });
+  },
+
+  // A manual upload takes ownership of this Image node's contents.
+  replaceNodeImage: (id, image) => {
+    const state = get();
+    const edges = state.edges.filter(e => !(e.target === id && e.targetHandle === 'img'));
+    const nodes = state.nodes.map(n => ({ ...n, data: {
+      ...n.data,
+      ...(n.id === id ? { image, error: null } : {}),
+      ...(n.data.linkedImageNodeId === id ? { linkedImageNodeId: null } : {}),
+    } }));
+    set({ nodes: syncInputs(nodes, edges), edges });
   },
 
   updateNodeData: (id, patch) => {
@@ -106,27 +172,22 @@ export const useStore = create((set, get) => ({
     get().propagateFrom(id);
   },
 
-  propagateFrom: (sourceId) => {
+  propagateFrom: () => {
     const { nodes, edges } = get();
-    const source = nodes.find((n) => n.id === sourceId);
+    set({ nodes: syncInputs(nodes, edges) });
+  },
+
+  connectToImagine: (sourceId) => {
+    const source = get().nodes.find(n => n.id === sourceId);
     if (!source) return;
-    const outputImage = source.data?.output ?? source.data?.image ?? null;
-    if (outputImage == null) return;
-
-    const outgoing = edges.filter((e) => e.source === sourceId);
-    if (!outgoing.length) return;
-
-    set({
-      nodes: get().nodes.map((n) => {
-        const edge = outgoing.find((e) => e.target === n.id);
-        if (!edge) return n;
-        const field = HANDLE_TO_FIELD[edge.targetHandle] || "input";
-        return { ...n, data: { ...n.data, [field]: outputImage } };
-      }),
-    });
-
-    // chain further downstream (e.g. Crop -> Upscale -> Merge)
-    for (const edge of outgoing) get().propagateFrom(edge.target);
+    const existing = get().edges.find(e => e.source === sourceId && e.targetHandle === 'base' &&
+      get().nodes.some(n => n.id === e.target && n.type === 'imagine'));
+    if (existing) { get().propagateFrom(sourceId); return existing.target; }
+    const id = nextId('imagine');
+    get().addNode({ id, type: 'imagine', position: { x: source.position.x + 360, y: source.position.y },
+      data: { prompt: '', ratio: 'AUTO', resolution: 'AUTO', output: null } });
+    get().onConnect({ source: sourceId, sourceHandle: 'out', target: id, targetHandle: 'base' });
+    return id;
   },
 
   // After an Imagine node generates an image, drop (or update) a companion
@@ -166,10 +227,5 @@ export const useStore = create((set, get) => ({
     get().updateNodeData(sourceId, { linkedImageNodeId: newId });
   },
 
-  removeNode: (id) => {
-    set({
-      nodes: get().nodes.filter((n) => n.id !== id),
-      edges: get().edges.filter((e) => e.source !== id && e.target !== id),
-    });
-  },
+  removeNode: (id) => get().onNodesChange([{ type: 'remove', id }]),
 }));
