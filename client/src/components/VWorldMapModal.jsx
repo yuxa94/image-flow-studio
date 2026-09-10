@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { waitForVWorldSdk } from "../lib/vworld.js";
+import { createBuildingVisibility, waitForVWorldSdk } from "../lib/vworld.js";
 import { cropImage } from "../lib/imageUtils.js";
 import { ASPECT_RATIOS } from "../lib/ratios.js";
 import { useStore } from "../lib/store.js";
@@ -155,7 +155,8 @@ export default function VWorldMapModal() {
   const [capturing, setCapturing] = useState(false);
   const [showBuildings, setShowBuildings] = useState(true);
   const [showBuildingNames, setShowBuildingNames] = useState(true);
-  const [hiddenBuildings, setHiddenBuildings] = useState([]); // { id, name, key, feature }
+  const [hideBuildingError, setHideBuildingError] = useState(null);
+  const [hiddenBuildings, setHiddenBuildings] = useState([]); // { id, name, key }
 
   const mapContainerRef = useRef(null);
   const stageRef = useRef(null);
@@ -173,11 +174,7 @@ export default function VWorldMapModal() {
   const modelsRef = useRef(models);
   const selectedModelIdRef = useRef(selectedModelId);
   const pendingActionRef = useRef(pendingAction);
-  // Keys (TD_ID/MODEL_NAME) of manually hidden VWorld buildings — survives
-  // tile reloads, unlike the Cesium3DTileFeature objects themselves (a
-  // building whose tile gets evicted and later reloaded is a brand-new
-  // feature instance with default visibility; see the tileLoad hook below).
-  const hiddenBuildingKeysRef = useRef(new Set());
+  const buildingVisibilityRef = useRef(null);
 
   const ratioOption = RATIO_OPTIONS.find((r) => r.label === ratioLabel) || RATIO_OPTIONS[0];
   const selectedModel = models.find((m) => m.id === selectedModelId) || null;
@@ -278,67 +275,7 @@ export default function VWorldMapModal() {
               console.warn("VWorld: silhouette outline unavailable", e);
             }
 
-            // A building we hid stays hidden only on the exact
-            // Cesium3DTileFeature instance we touched — once its tile is
-            // evicted (out of view/zoomed out) and reloaded, the tileset
-            // hands back a brand-new feature at default (visible) show, so
-            // the building silently reappears. Re-applying hide on every
-            // tile load, keyed by TD_ID/MODEL_NAME (checked against
-            // hiddenBuildingKeysRef, which survives reloads), fixes that.
-            // Hooked once globally (guarded like the outline stages above)
-            // and covers tilesets added later too, since VWorld streams in
-            // new regional tilesets as the camera moves.
-            if (!window.__vworldTileHideHook) {
-              // Guarded the same way as the outline stages above, but each
-              // per-primitive step has its own try/catch: one odd primitive
-              // (e.g. a Cesium3DTileset whose .tileLoad isn't set up yet at
-              // the instant primitiveAdded fires) must not throw out of the
-              // whole block and leave the flag unset — since this effect
-              // only ever runs once, that would silently disable hidden-
-              // building persistence for the rest of the session.
-              const reapplyHiddenOnLoad = (tile) => {
-                try {
-                  const content = tile.content;
-                  if (!content || typeof content.featuresLength !== "number") return;
-                  for (let i = 0; i < content.featuresLength; i++) {
-                    const feature = content.getFeature(i);
-                    const key = feature.getProperty("TD_ID") || feature.getProperty("MODEL_NAME");
-                    if (key && hiddenBuildingKeysRef.current.has(key)) {
-                      feature.show = false;
-                    }
-                  }
-                } catch (e) {
-                  console.warn("VWorld: re-applying hidden building on tile load failed", e);
-                }
-              };
-              const hookTileset = (primitive) => {
-                try {
-                  if (!(primitive instanceof Cesium.Cesium3DTileset) || primitive.__vworldHideHooked || !primitive.tileLoad) return;
-                  primitive.__vworldHideHooked = true;
-                  primitive.tileLoad.addEventListener(reapplyHiddenOnLoad);
-                } catch (e) {
-                  console.warn("VWorld: hooking tileset for hidden-building persistence failed", e);
-                }
-              };
-              try {
-                // primitives.primitiveAdded isn't available on this
-                // bundled Cesium build's PrimitiveCollection (confirmed:
-                // it throws), so re-scan on every rendered frame instead —
-                // hookTileset() already no-ops on anything already tagged,
-                // so this is cheap, and it also covers tilesets VWorld
-                // creates later for regions the camera pans into.
-                const scanForNewTilesets = () => {
-                  for (let i = 0; i < viewer.scene.primitives.length; i++) {
-                    hookTileset(viewer.scene.primitives.get(i));
-                  }
-                };
-                scanForNewTilesets();
-                viewer.scene.postRender.addEventListener(scanForNewTilesets);
-              } catch (e) {
-                console.warn("VWorld: tile-reload hide hook unavailable", e);
-              }
-              window.__vworldTileHideHook = true;
-            }
+            buildingVisibilityRef.current = createBuildingVisibility(viewer.scene);
 
             setStatus("ready");
           } else if (attempts < 100) {
@@ -359,6 +296,8 @@ export default function VWorldMapModal() {
 
     return () => {
       cancelled = true;
+      buildingVisibilityRef.current?.dispose();
+      buildingVisibilityRef.current = null;
     };
   }, []);
 
@@ -382,12 +321,15 @@ export default function VWorldMapModal() {
         // primitives) or empty ground (nothing picked) — only hide that.
         const picked = viewer.scene.pick(movement.position);
         if (picked && typeof picked.show === "boolean" && typeof picked.getProperty === "function") {
-          picked.show = false;
-          const key = picked.getProperty("TD_ID") || picked.getProperty("MODEL_NAME") || null;
-          if (key) hiddenBuildingKeysRef.current.add(key);
+          const key = buildingVisibilityRef.current?.hide(picked);
+          if (!key) {
+            setHideBuildingError("이 건물은 식별 정보가 없어 숨김 상태를 유지할 수 없습니다.");
+            return;
+          }
+          setHideBuildingError(null);
           const name = picked.getProperty("MODEL_NAME") || picked.getProperty("TD_ID") || "Building";
-          setHiddenBuildings((prev) => [...prev, { id: `hb-${hiddenBuildingCounter++}`, name, key, feature: picked }]);
-          viewer.scene.requestRender();
+          const entry = { id: `hb-${hiddenBuildingCounter++}`, name, key };
+          setHiddenBuildings((prev) => prev.some((b) => b.key === key) ? prev : [...prev, entry]);
         }
         return; // stays in hideBuilding mode for the next click
       }
@@ -819,31 +761,16 @@ export default function VWorldMapModal() {
     viewer.scene.requestRender();
   }
 
-  // Un-hiding has to clear the key from hiddenBuildingKeysRef too, not just
-  // set .show back on the current feature instance — otherwise the next
-  // tile reload for that building (see the tileLoad hook above) would hide
-  // it right back based on the stale key.
   function restoreBuilding(id) {
-    setHiddenBuildings((prev) => {
-      const entry = prev.find((b) => b.id === id);
-      if (entry) {
-        entry.feature.show = true;
-        if (entry.key) hiddenBuildingKeysRef.current.delete(entry.key);
-      }
-      return prev.filter((b) => b.id !== id);
-    });
-    viewerRef.current?.scene.requestRender();
+    const entry = hiddenBuildings.find((b) => b.id === id);
+    if (!entry) return;
+    buildingVisibilityRef.current?.restore(entry.key);
+    setHiddenBuildings((prev) => prev.filter((b) => b.id !== id));
   }
 
   function restoreAllBuildings() {
-    setHiddenBuildings((prev) => {
-      prev.forEach((b) => {
-        b.feature.show = true;
-        if (b.key) hiddenBuildingKeysRef.current.delete(b.key);
-      });
-      return [];
-    });
-    viewerRef.current?.scene.requestRender();
+    buildingVisibilityRef.current?.restoreAll();
+    setHiddenBuildings([]);
   }
 
   // Building/place-name text labels — turns out these ARE reachable through
@@ -1109,6 +1036,7 @@ export default function VWorldMapModal() {
                 >
                   {pendingAction?.type === "hideBuilding" ? "Click buildings to hide (click again to stop)" : "🏢 Hide building (click map)"}
                 </button>
+                {hideBuildingError ? <p role="status">{hideBuildingError}</p> : null}
                 {hiddenBuildings.map((b) => (
                   <div className="layer-row" key={b.id}>
                     <span className="layer-name">{b.name}</span>
