@@ -47,9 +47,26 @@ export function nextId(prefix) {
   return `${prefix}-${idCounter++}-${Math.floor(Math.random() * 1e6)}`;
 }
 
+// Generation edges show provenance, not a live image input. A saved result
+// must stay unchanged when its producer generates another image.
+export function addGenerationLinks(nodes, edges) {
+  const next = [...edges];
+  const ids = new Set(nodes.map(n => n.id));
+  for (const node of nodes) {
+    const source = node.data.generatedFrom;
+    if (!source || !ids.has(source) || next.some(e => e.target === node.id && e.targetHandle === 'img')) continue;
+    next.push({ id: `generation-${source}-${node.id}`, source, sourceHandle: 'out',
+      target: node.id, targetHandle: 'img', data: { generationResult: true },
+      label: `결과 ${node.data.generationIndex}`, style: { stroke: '#5ee6a0' } });
+  }
+  return next;
+}
+
 // Synchronize every connected handle, including removed connections. Image
 // relay nodes are evaluated upstream first; a visited set bounds legacy cycles.
 function syncInputs(nodes, edges, previousEdges = edges) {
+  edges = edges.filter(e => !e.data?.generationResult);
+  previousEdges = previousEdges.filter(e => !e.data?.generationResult);
   const byId = new Map(nodes.map(n => [n.id, { ...n, data: { ...n.data } }]));
   const visited = new Set();
   function visit(id) {
@@ -80,7 +97,8 @@ const hotState = import.meta.hot ? window.__imageFlowStore?.getState() : null;
 export const useStore = create((set, get) => ({
   settings: loadSettings(),
   nodes: hotState?.nodes || [],
-  edges: hotState?.edges || [],
+  edges: hotState?.generationLinksVersion === 1 ? hotState.edges : addGenerationLinks(hotState?.nodes || [], hotState?.edges || []),
+  generationLinksVersion: 1,
   lightboxImage: null,
 
   openLightbox: (image) => set({ lightboxImage: image }),
@@ -128,7 +146,7 @@ export const useStore = create((set, get) => ({
       if (id === source) return false;
       if (seen.has(id)) continue;
       seen.add(id);
-      edges.filter(e => e.source === id).forEach(e => queue.push(e.target));
+      edges.filter(e => e.source === id && !e.data?.generationResult).forEach(e => queue.push(e.target));
     }
     return true;
   },
@@ -192,7 +210,7 @@ export const useStore = create((set, get) => ({
 
   // Save each successful generation as an independent image snapshot. Live
   // connections from Imagine still receive its latest output, but snapshots
-  // have no incoming edge that could overwrite their earlier image.
+  // use provenance-only edges that cannot overwrite their earlier image.
   linkGeneratedImage: (sourceId, image) => {
     const { nodes, edges } = get();
     const source = nodes.find(n => n.id === sourceId);
@@ -227,7 +245,9 @@ export const useStore = create((set, get) => ({
         generatedFrom: sourceId, generationIndex: 1 } };
       return n;
     });
-    set({ nodes: syncInputs([...nextNodes, newNode], nextEdges), edges: nextEdges });
+    const savedNodes = [...nextNodes, newNode];
+    const linkedEdges = addGenerationLinks(savedNodes.filter(n => n.id === sourceId || n.id === newId || (legacy && n.id === legacyId)), nextEdges);
+    set({ nodes: syncInputs(savedNodes, linkedEdges), edges: linkedEdges });
     return newId;
   },
 

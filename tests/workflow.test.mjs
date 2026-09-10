@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { useStore } from '../client/src/lib/store.js';
+import { useStore, addGenerationLinks } from '../client/src/lib/store.js';
 import * as ratios from '../client/src/lib/ratios.js';
 const n = (id, type = 'imagine', data = {}) => ({ id, type, data, position: { x: 0, y: 0 } });
 const c = (source, target, targetHandle = 'base') => ({ source, target, targetHandle, sourceHandle: 'out' });
@@ -109,7 +109,7 @@ test('the existing linked result is preserved before the next generation updates
   s.linkGeneratedImage('ai', 'new');
   assert.equal(data('legacy').image, 'old');
   assert.equal(useStore.getState().nodes.filter(n => n.type === 'image').length, 2);
-  assert.equal(useStore.getState().edges.some(e => e.source === 'ai' && e.target === 'legacy'), false);
+  assert.equal(useStore.getState().edges.find(e => e.source === 'ai' && e.target === 'legacy')?.data.generationResult, true);
   s.propagateFrom('ai');
   assert.equal(data('legacy').image, 'old');
 });
@@ -123,4 +123,39 @@ test('new results avoid existing nodes and missing producers cannot append resul
   const count = useStore.getState().nodes.length;
   s.linkGeneratedImage('missing', 'ignored');
   assert.equal(useStore.getState().nodes.length, count);
+});
+
+test('generation lines connect every result without overwriting snapshots', () => {
+  const s = setup([n('ai')]);
+  const first = s.linkGeneratedImage('ai', 'first');
+  const second = s.linkGeneratedImage('ai', 'second');
+  const lines = useStore.getState().edges.filter(e => e.source === 'ai');
+  assert.deepEqual(lines.map(e => e.target), [first, second]);
+  assert.ok(lines.every(e => e.sourceHandle === 'out' && e.targetHandle === 'img'));
+  s.propagateFrom('ai');
+  assert.equal(data(first).image, 'first');
+  s.onEdgesChange([{ type: 'remove', id: lines[0].id }]);
+  assert.equal(data(first).image, 'first');
+});
+
+test('a saved result can feed back into its generator without forming a live dependency cycle', () => {
+  const s = setup([n('ai')]);
+  const first = s.linkGeneratedImage('ai', 'first');
+  assert.equal(useStore.getState().edges.length, 1);
+  s.onConnect(c(first, 'ai'));
+  assert.equal(data('ai').baseImage, 'first');
+  s.linkGeneratedImage('ai', 'second');
+  assert.equal(data('ai').baseImage, 'first');
+  assert.equal(data(first).image, 'first');
+});
+
+
+test('restores missing lines on existing results once without duplicating or replacing live inputs', () => {
+  const nodes = [n('ai'), n('other'), n('one', 'image', { generatedFrom: 'ai', generationIndex: 1 }), n('two', 'image', { generatedFrom: 'ai', generationIndex: 2 })];
+  const live = { id: 'live', ...c('other', 'two', 'img') };
+  const edges = addGenerationLinks(nodes, [live]);
+  assert.equal(edges.length, 2);
+  assert.equal(edges[0], live);
+  assert.equal(edges[1].target, 'one');
+  assert.deepEqual(addGenerationLinks(nodes, edges), edges);
 });
