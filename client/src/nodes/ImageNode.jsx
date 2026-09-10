@@ -28,10 +28,10 @@ export default function ImageNode({ id, data, selected }) {
   }
 
   return (
-    <NodeShell title="Image" badge={roleBadge} selected={selected}>
+    <NodeShell title={data.generationIndex ? `결과 ${data.generationIndex}` : "Image"} badge={roleBadge} selected={selected}>
       <Handle type="target" position={Position.Left} id="img" />
 
-      <ImagePreview src={data.image} alt="input" empty="No image" />
+      <ImagePreview src={data.image} alt="input" empty="No image" downloadable={!!data.generationIndex} filename={`result-${id}.png`} />
 
       <input
         ref={inputRef}

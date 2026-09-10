@@ -13,7 +13,6 @@ const RESOLUTIONS = ["AUTO", "1K", "2K", "4K"];
 
 export default function ImagineNode({ id, data, selected }) {
   const updateNodeData = useStore((s) => s.updateNodeData);
-  const setNodeOutput = useStore((s) => s.setNodeOutput);
   const linkGeneratedImage = useStore((s) => s.linkGeneratedImage);
   const settings = useStore((s) => s.settings);
   const [editorOpen, setEditorOpen] = useState(false);
@@ -50,7 +49,6 @@ export default function ImagineNode({ id, data, selected }) {
       });
       // the annotated edit is a one-shot instruction — clear it once consumed
       updateNodeData(id, { loading: false, error: null, editedImage: null });
-      setNodeOutput(id, result.image);
       linkGeneratedImage(id, result.image);
     } catch (err) {
       updateNodeData(id, { loading: false, error: err.message });
@@ -145,7 +143,8 @@ export default function ImagineNode({ id, data, selected }) {
         {data.loading ? "Generating..." : "✨ Generate"}
       </button>
 
-      {data.output ? <><label>생성 결과</label><ImagePreview src={data.output} alt="output" downloadable filename={`imagine-${id}.png`} /></> : null}
+      {data.generationCount ? <div className="hint">생성 결과 {data.generationCount}개 · 각 결과는 오른쪽 Image 노드에 보관됩니다.</div> : null}
+      {data.output ? <><label>최근 생성 결과</label><ImagePreview src={data.output} alt="output" downloadable filename={`imagine-${id}.png`} /></> : null}
 
       <Handle type="source" position={Position.Right} id="out" />
 

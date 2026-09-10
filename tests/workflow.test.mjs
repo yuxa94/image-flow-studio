@@ -84,3 +84,43 @@ test('explicitly replacing a linked image keeps the upload and detaches its old 
   s.setNodeOutput('source', 'later'); s.linkGeneratedImage('source', 'later');
   assert.equal(data('image').image, 'uploaded');
 });
+
+test('each generation appends a snapshot and leaves earlier results and their inputs unchanged', () => {
+  const s = setup([n('ai'), n('next')]);
+  s.linkGeneratedImage('ai', 'first');
+  const first = useStore.getState().nodes.find(n => n.type === 'image');
+  s.onConnect(c(first.id, 'next'));
+  s.linkGeneratedImage('ai', 'second');
+  s.linkGeneratedImage('ai', 'third');
+  const results = useStore.getState().nodes.filter(n => n.type === 'image');
+  assert.deepEqual(results.map(n => n.data.image), ['first', 'second', 'third']);
+  assert.deepEqual(results.map(n => n.data.generationIndex), [1, 2, 3]);
+  assert.equal(new Set(results.map(n => `${n.position.x},${n.position.y}`)).size, 3);
+  s.propagateFrom('ai');
+  assert.equal(data('next').baseImage, 'first');
+  assert.equal(data('ai').output, 'third');
+  s.removeNode('ai');
+  assert.equal(data(first.id).image, 'first');
+});
+
+test('the existing linked result is preserved before the next generation updates output', () => {
+  const s = setup([n('ai', 'imagine', { output: 'old', linkedImageNodeId: 'legacy' }), n('legacy', 'image', { image: 'old' })]);
+  s.onConnect(c('ai', 'legacy', 'img'));
+  s.linkGeneratedImage('ai', 'new');
+  assert.equal(data('legacy').image, 'old');
+  assert.equal(useStore.getState().nodes.filter(n => n.type === 'image').length, 2);
+  assert.equal(useStore.getState().edges.some(e => e.source === 'ai' && e.target === 'legacy'), false);
+  s.propagateFrom('ai');
+  assert.equal(data('legacy').image, 'old');
+});
+
+test('new results avoid existing nodes and missing producers cannot append results', () => {
+  const occupied = { ...n('occupied', 'image'), position: { x: 340, y: 0 }, measured: { width: 260, height: 500 } };
+  const s = setup([n('ai'), occupied]);
+  s.linkGeneratedImage('ai', 'result');
+  const result = useStore.getState().nodes.find(n => n.data.image === 'result');
+  assert.ok(result.position.y >= 500);
+  const count = useStore.getState().nodes.length;
+  s.linkGeneratedImage('missing', 'ignored');
+  assert.equal(useStore.getState().nodes.length, count);
+});

@@ -190,41 +190,45 @@ export const useStore = create((set, get) => ({
     return id;
   },
 
-  // After an Imagine node generates an image, drop (or update) a companion
-  // Image node right next to it, wired from its output, so the user can
-  // immediately feed the result back into another Imagine node to keep
-  // iterating.
+  // Save each successful generation as an independent image snapshot. Live
+  // connections from Imagine still receive its latest output, but snapshots
+  // have no incoming edge that could overwrite their earlier image.
   linkGeneratedImage: (sourceId, image) => {
     const { nodes, edges } = get();
-    const source = nodes.find((n) => n.id === sourceId);
-    if (!source) return;
+    const source = nodes.find(n => n.id === sourceId);
+    if (!source || !image) return;
 
-    const existingId = source.data?.linkedImageNodeId;
-    const existing = existingId && nodes.find((n) => n.id === existingId);
+    // Freeze the companion created by older versions BEFORE publishing the
+    // new output. Keeping this atomic prevents propagation from erasing it.
+    const legacyId = source.data.linkedImageNodeId;
+    const legacy = nodes.find(n => n.id === legacyId && n.type === 'image');
+    const nextEdges = edges.filter(e => !(legacy && e.source === sourceId &&
+      e.target === legacyId && e.targetHandle === 'img'));
+    const generationIndex = Math.max(source.data.generationCount || 0, legacy ? 1 : 0,
+      ...nodes.filter(n => n.data.generatedFrom === sourceId).map(n => n.data.generationIndex || 0)) + 1;
+    const position = { x: source.position.x + 340, y: source.position.y };
+    // Stack in the next free space, including nodes moved by the user.
+    let collision;
+    do {
+      collision = nodes.find(n => position.x < n.position.x + (n.measured?.width || 260) + 24 &&
+        position.x + 260 + 24 > n.position.x &&
+        position.y < n.position.y + (n.measured?.height || 300) + 24 &&
+        position.y + 300 + 24 > n.position.y);
+      if (collision) position.y = collision.position.y + (collision.measured?.height || 300) + 24;
+    } while (collision);
 
-    if (existing) {
-      get().updateNodeData(existing.id, { image });
-      get().propagateFrom(existing.id);
-      return;
-    }
-
-    const newId = nextId("image");
-    const newNode = {
-      id: newId,
-      type: "image",
-      position: { x: source.position.x + 340, y: source.position.y },
-      data: { image },
-    };
-    const newEdge = {
-      id: nextId("edge"),
-      source: sourceId,
-      sourceHandle: "out",
-      target: newId,
-      targetHandle: "img",
-    };
-
-    set({ nodes: [...get().nodes, newNode], edges: [...edges, newEdge] });
-    get().updateNodeData(sourceId, { linkedImageNodeId: newId });
+    const newId = nextId('image');
+    const newNode = { id: newId, type: 'image', position,
+      data: { image, generatedFrom: sourceId, generationIndex } };
+    const nextNodes = nodes.map(n => {
+      if (n.id === sourceId) return { ...n, data: { ...n.data, output: image,
+        generationCount: generationIndex, linkedImageNodeId: null } };
+      if (legacy && n.id === legacyId) return { ...n, data: { ...n.data,
+        generatedFrom: sourceId, generationIndex: 1 } };
+      return n;
+    });
+    set({ nodes: syncInputs([...nextNodes, newNode], nextEdges), edges: nextEdges });
+    return newId;
   },
 
   removeNode: (id) => get().onNodesChange([{ type: 'remove', id }]),
