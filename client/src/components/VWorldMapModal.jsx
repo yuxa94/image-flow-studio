@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { createBuildingVisibility, loadSceneModel, waitForVWorldSdk } from "../lib/vworld.js";
+import { addBlackModelEdges, keepModelPivotFixed } from "../lib/modelGeometry.js";
 import { cropImage } from "../lib/imageUtils.js";
 import { ASPECT_RATIOS, fitCaptureRect } from "../lib/ratios.js";
 import { useStore } from "../lib/store.js";
@@ -21,8 +22,18 @@ function clamp(v, min, max) {
 
 const CAPTURE_CORNERS = ["nw", "ne", "sw", "se"];
 
-function composeMatrix(Cesium, position, heading, pitch, roll) {
-  return Cesium.Transforms.headingPitchRollToFixedFrame(position, new Cesium.HeadingPitchRoll(heading, pitch, roll));
+function composeMatrix(Cesium, position, heading, pitch, roll, pivot = null, scale = 1) {
+  const matrix = Cesium.Transforms.headingPitchRollToFixedFrame(position, new Cesium.HeadingPitchRoll(heading, pitch, roll));
+  return pivot ? keepModelPivotFixed(matrix, pivot, scale) : matrix;
+}
+
+function withModelPivot(Cesium, model) {
+  if (model.pivot) return model;
+  const position = Cesium.Cartesian3.clone(model.primitive.boundingSphere.center);
+  const inverse = Cesium.Matrix4.inverse(model.primitive.modelMatrix, new Cesium.Matrix4());
+  const pivot = Cesium.Matrix4.multiplyByPoint(inverse, position, new Cesium.Cartesian3());
+  Cesium.Cartesian3.divideByScalar(pivot, model.scale, pivot);
+  return { ...model, position, pivot };
 }
 
 let modelCounter = 1;
@@ -57,7 +68,7 @@ function modelCenterAndRadius(Cesium, model) {
   try {
     if (model.primitive.ready) {
       const bs = model.primitive.boundingSphere;
-      if (bs) return { center: Cesium.Cartesian3.clone(bs.center), radius: bs.radius || 30 };
+      if (bs) return { center: Cesium.Cartesian3.clone(model.pivot ? model.position : bs.center), radius: bs.radius || 30 };
     }
   } catch {
     // not ready yet — use the placement point below
@@ -155,7 +166,6 @@ export default function VWorldMapModal() {
   const clickHandlerRef = useRef(null);
   const fileInputRef = useRef(null);
   const outlineStageRef = useRef(null);
-  const allEdgesStageRef = useRef(null);
   const gizmoRef = useRef(null); // { modelId, entities: { [key]: Entity } }
   const gizmoHandlerRef = useRef(null);
   const dragRef = useRef(null);
@@ -170,10 +180,7 @@ export default function VWorldMapModal() {
 
   useEffect(() => {
     modelsRef.current = models;
-    if (allEdgesStageRef.current) {
-      allEdgesStageRef.current.selected = models.map((m) => m.primitive);
-      viewerRef.current?.scene.requestRender();
-    }
+    viewerRef.current?.scene.requestRender();
   }, [models]);
   useEffect(() => {
     selectedModelIdRef.current = selectedModelId;
@@ -225,44 +232,11 @@ export default function VWorldMapModal() {
             mapRef.current = window.__vworldMapInstance || null;
             cesiumRef.current = window.Cesium;
 
-            // Two edge-detection post-process stages, stacked (both use
-            // Cesium's normal/depth-based edge detector, not just an outer
-            // silhouette, so face-to-face edges within a model show up too
-            // — e.g. where a tower's side meets its roof — matching a
-            // SketchUp-style CAD line drawing rather than a plain outline).
-            // Black, on every placed model, added first: always-on CAD edges.
-            // Yellow, on the selected model, added second so it draws on
-            // top: the selected model's edges turn fully yellow instead.
-            // Both guarded on window flags (not local refs) for the same
-            // StrictMode-double-mount reason as the viewer init above —
-            // adding either twice would draw doubled/overlapping edges.
-            const Cesium = window.Cesium;
             const viewer = window.ws3d.viewer;
-
-            try {
-              if (!window.__vworldAllEdges) {
-                const allEdges = Cesium.PostProcessStageLibrary.createEdgeDetectionStage();
-                allEdges.uniforms.color = Cesium.Color.BLACK;
-                allEdges.uniforms.length = 0.02;
-                allEdges.selected = [];
-                viewer.scene.postProcessStages.add(Cesium.PostProcessStageLibrary.createSilhouetteStage([allEdges]));
-                window.__vworldAllEdges = allEdges;
-              }
-              allEdgesStageRef.current = window.__vworldAllEdges;
-
-              if (!window.__vworldOutline) {
-                const edgeDetection = Cesium.PostProcessStageLibrary.createEdgeDetectionStage();
-                edgeDetection.uniforms.color = Cesium.Color.fromCssColorString("#ffe600");
-                edgeDetection.uniforms.length = 0.02;
-                edgeDetection.selected = [];
-                const silhouette = Cesium.PostProcessStageLibrary.createSilhouetteStage([edgeDetection]);
-                viewer.scene.postProcessStages.add(silhouette);
-                window.__vworldOutline = edgeDetection;
-              }
-              outlineStageRef.current = window.__vworldOutline;
-            } catch (e) {
-              console.warn("VWorld: silhouette outline unavailable", e);
-            }
+            // Retire old screen-space outlines during hot updates. Edges are
+            // now part of the uploaded geometry, always black when selected.
+            if (window.__vworldAllEdges) window.__vworldAllEdges.selected = [];
+            if (window.__vworldOutline) window.__vworldOutline.selected = [];
 
             buildingVisibilityRef.current = createBuildingVisibility(viewer.scene);
 
@@ -334,22 +308,29 @@ export default function VWorldMapModal() {
         modelBusyRef.current = true;
         setModelLoading(true);
         setError(null);
+        let preparedUrl, loadedModel;
         try {
+          const prepared = addBlackModelEdges(await pendingAction.file.arrayBuffer());
+          preparedUrl = URL.createObjectURL(new Blob([prepared.buffer], { type: "model/gltf-binary" }));
           const modelMatrix = composeMatrix(Cesium, cartesian, 0, 0, 0);
-          const model = await loadSceneModel(Cesium, viewer.scene, { url: pendingAction.url, modelMatrix });
+          const model = loadedModel = await loadSceneModel(Cesium, viewer.scene, { url: preparedUrl, modelMatrix });
           if (token !== modelLoadTokenRef.current) {
             viewer.scene.primitives.remove(model);
             return;
           }
           const id = `model-${modelCounter++}`;
-          setModels((prev) => [...prev, { id, name: pendingAction.name, primitive: model,
-            position: cartesian, heading: 0, pitch: 0, roll: 0, scale: 1 }]);
+          const placed = withModelPivot(Cesium, { id, name: pendingAction.name, primitive: model,
+            position: cartesian, heading: 0, pitch: 0, roll: 0, scale: 1 });
+          model.modelMatrix = composeMatrix(Cesium, placed.position, 0, 0, 0, placed.pivot, 1);
+          setModels((prev) => [...prev, placed]);
           setSelectedModelId(id);
           viewer.scene.requestRender();
         } catch (err) {
+          if (loadedModel && !loadedModel.isDestroyed?.()) viewer.scene.primitives.remove(loadedModel);
           console.warn("VWorld: model loading failed", err);
           if (token === modelLoadTokenRef.current) setError(`“${pendingAction.name}”을 불러오지 못했습니다. 텍스처가 포함된 올바른 GLB 파일인지 확인하고 다시 올려주세요.`);
         } finally {
+          if (preparedUrl) URL.revokeObjectURL(preparedUrl);
           if (token === modelLoadTokenRef.current) {
             modelBusyRef.current = false;
             setModelLoading(false);
@@ -360,8 +341,10 @@ export default function VWorldMapModal() {
         setModels((prev) =>
           prev.map((m) => {
             if (m.id !== pendingAction.modelId) return m;
-            m.primitive.modelMatrix = composeMatrix(Cesium, cartesian, m.heading, m.pitch, m.roll);
-            return { ...m, position: cartesian };
+            const centered = withModelPivot(Cesium, m);
+            const position = addScaled(Cesium, cartesian, enuBasis(Cesium, cartesian).up, centered.pivot.z * centered.scale);
+            m.primitive.modelMatrix = composeMatrix(Cesium, position, m.heading, m.pitch, m.roll, centered.pivot, m.scale);
+            return { ...centered, position };
           })
         );
         setPendingAction(null);
@@ -477,8 +460,9 @@ export default function VWorldMapModal() {
       const part = picked?.id?.gizmoPart;
       if (!part) return;
 
-      const model = modelsRef.current.find((m) => m.id === selectedModelIdRef.current);
-      if (!model) return;
+      const found = modelsRef.current.find((m) => m.id === selectedModelIdRef.current);
+      if (!found) return;
+      const model = withModelPivot(Cesium, found);
 
       const { center } = modelCenterAndRadius(Cesium, model);
       const basis = enuBasis(Cesium, center);
@@ -513,16 +497,17 @@ export default function VWorldMapModal() {
     handler.setInputAction((movement) => {
       const drag = dragRef.current;
       if (!drag) return;
-      const model = modelsRef.current.find((m) => m.id === selectedModelIdRef.current);
-      if (!model) return;
+      const found = modelsRef.current.find((m) => m.id === selectedModelIdRef.current);
+      if (!found) return;
+      const model = withModelPivot(Cesium, found);
       const ray = viewer.camera.getPickRay(movement.endPosition);
       if (!ray) return;
 
       if (drag.type === "translate") {
         const t = closestTOnAxis(Cesium, drag.center, drag.axisDir, ray.origin, ray.direction);
         const newPosition = addScaled(Cesium, drag.startPosition, drag.axisDir, t - drag.startT);
-        model.primitive.modelMatrix = composeMatrix(Cesium, newPosition, model.heading, model.pitch, model.roll);
-        setModels((prev) => prev.map((m) => (m.id === model.id ? { ...m, position: newPosition } : m)));
+        model.primitive.modelMatrix = composeMatrix(Cesium, newPosition, model.heading, model.pitch, model.roll, model.pivot, model.scale);
+        setModels((prev) => prev.map((m) => (m.id === model.id ? { ...model, position: newPosition } : m)));
       } else {
         const angle = angleOnPlane(Cesium, drag.center, drag.normal, drag.a, drag.b, ray.origin, ray.direction);
         if (angle == null) return;
@@ -532,7 +517,7 @@ export default function VWorldMapModal() {
         if (drag.axis === "pitch") patch.pitch = drag.startPitch + delta;
         if (drag.axis === "roll") patch.roll = drag.startRoll + delta;
         const next = { ...model, ...patch };
-        model.primitive.modelMatrix = composeMatrix(Cesium, next.position, next.heading, next.pitch, next.roll);
+        model.primitive.modelMatrix = composeMatrix(Cesium, next.position, next.heading, next.pitch, next.roll, next.pivot, next.scale);
         setModels((prev) => prev.map((m) => (m.id === model.id ? next : m)));
       }
     }, Cesium.ScreenSpaceEventType.MOUSE_MOVE);
@@ -715,7 +700,7 @@ export default function VWorldMapModal() {
     }
     setError(null);
     const url = URL.createObjectURL(file);
-    setPendingAction({ type: "place", name: file.name, url });
+    setPendingAction({ type: "place", name: file.name, url, file });
   }
 
   function focusModel(m) {
@@ -742,8 +727,8 @@ export default function VWorldMapModal() {
     setModels((prev) =>
       prev.map((m) => {
         if (m.id !== modelId) return m;
-        const next = { ...m, ...patch };
-        m.primitive.modelMatrix = composeMatrix(Cesium, next.position, next.heading, next.pitch, next.roll);
+        const next = { ...withModelPivot(Cesium, m), ...patch };
+        m.primitive.modelMatrix = composeMatrix(Cesium, next.position, next.heading, next.pitch, next.roll, next.pivot, next.scale);
         m.primitive.scale = next.scale;
         return next;
       })
