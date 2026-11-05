@@ -29,6 +29,7 @@ export const PALETTE = [
         title: "Imagine",
         subtitle: "Gemini AI generation",
         defaultData: () => ({
+          provider: "gemini",
           prompt: "",
           ratio: "AUTO",
           resolution: "AUTO",

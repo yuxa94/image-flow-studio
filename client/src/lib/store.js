@@ -32,14 +32,21 @@ export const HANDLE_LABELS = {
 
 const SETTINGS_KEY = "image-flow-studio:settings";
 
+const DEFAULT_SETTINGS = {
+  apiKey: "",
+  model: "gemini-3-pro-image-preview",
+  openaiApiKey: "",
+  openaiModel: "gpt-image-2.5-sunburst",
+};
+
 function loadSettings() {
   try {
     const raw = localStorage.getItem(SETTINGS_KEY);
-    if (raw) return JSON.parse(raw);
+    if (raw) return { ...DEFAULT_SETTINGS, ...JSON.parse(raw) };
   } catch {
     // ignore
   }
-  return { apiKey: "", model: "gemini-3-pro-image-preview" };
+  return { ...DEFAULT_SETTINGS };
 }
 
 let idCounter = 1;
@@ -203,7 +210,7 @@ export const useStore = create((set, get) => ({
     if (existing) { get().propagateFrom(sourceId); return existing.target; }
     const id = nextId('imagine');
     get().addNode({ id, type: 'imagine', position: { x: source.position.x + 360, y: source.position.y },
-      data: { prompt: '', ratio: 'AUTO', resolution: 'AUTO', output: null } });
+      data: { provider: 'gemini', prompt: '', ratio: 'AUTO', resolution: 'AUTO', output: null } });
     get().onConnect({ source: sourceId, sourceHandle: 'out', target: id, targetHandle: 'base' });
     return id;
   },

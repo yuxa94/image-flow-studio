@@ -31,6 +31,29 @@ export default function SettingsPanel() {
             Stored only in this browser's local storage. Never sent anywhere except your local
             server, which forwards it to Google's API.
           </div>
+
+          <label>OpenAI API key</label>
+          <input
+            className="node-input"
+            type="password"
+            placeholder="서버에 설정되어 있으면 생략 가능"
+            value={settings.openaiApiKey}
+            onChange={(e) => setSettings({ openaiApiKey: e.target.value })}
+          />
+          <label>OpenAI model</label>
+          <input
+            className="node-input"
+            type="text"
+            placeholder="gpt-image-2.5-sunburst"
+            value={settings.openaiModel}
+            onChange={(e) => setSettings({ openaiModel: e.target.value })}
+          />
+          <div className="hint">
+            e.g. <code>gpt-image-2.5-sunburst</code> (higher quality) or{" "}
+            <code>gpt-image-2.5-flare</code> (faster) — or <code>gpt-image-1</code> if that's what
+            your account has access to. Used by the Imagine node when its Provider is set to
+            OpenAI.
+          </div>
         </div>
       ) : null}
       <button className="settings-fab" onClick={() => setOpen((v) => !v)}>

@@ -10,6 +10,10 @@ import { ASPECT_RATIO_LABELS } from "../lib/ratios.js";
 
 const RATIOS = ["AUTO", ...ASPECT_RATIO_LABELS];
 const RESOLUTIONS = ["AUTO", "1K", "2K", "4K"];
+const PROVIDERS = [
+  { value: "gemini", label: "Gemini (Nano Banana)" },
+  { value: "openai", label: "OpenAI (GPT Image 2.5)" },
+];
 
 export default function ImagineNode({ id, data, selected }) {
   const updateNodeData = useStore((s) => s.updateNodeData);
@@ -17,6 +21,7 @@ export default function ImagineNode({ id, data, selected }) {
   const settings = useStore((s) => s.settings);
   const [editorOpen, setEditorOpen] = useState(false);
   const generatingRef = useRef(false);
+  const provider = data.provider || "gemini";
 
   async function handleGenerate() {
     if (generatingRef.current) return;
@@ -40,8 +45,9 @@ export default function ImagineNode({ id, data, selected }) {
     try {
       if (!baseRaw) throw new Error("기준 이미지 형식을 읽을 수 없습니다. 다시 캡처하거나 업로드해주세요.");
       const result = await generateImage({
-        apiKey: settings.apiKey,
-        model: settings.model,
+        provider,
+        apiKey: provider === "openai" ? settings.openaiApiKey : settings.apiKey,
+        model: provider === "openai" ? settings.openaiModel : settings.model,
         prompt: data.prompt || "",
         images,
         ratio: data.ratio && data.ratio !== "AUTO" ? data.ratio : data.baseRatio || "AUTO",
@@ -60,7 +66,7 @@ export default function ImagineNode({ id, data, selected }) {
   const editorBaseSrc = data.output || data.editedImage || data.baseImage;
 
   return (
-    <NodeShell title="Imagine" badge="GEMINI" selected={selected}>
+    <NodeShell title="Imagine" badge={provider === "openai" ? "GPT IMAGE" : "GEMINI"} selected={selected}>
       <div className="handle-row">
         <Handle type="target" position={Position.Left} id="base" />
         <span className="handle-row-label">Base</span>
@@ -97,6 +103,19 @@ export default function ImagineNode({ id, data, selected }) {
           </a>
         </div>
       ) : null}
+
+      <label>Provider</label>
+      <select
+        className="node-select"
+        value={provider}
+        onChange={(e) => updateNodeData(id, { provider: e.target.value })}
+      >
+        {PROVIDERS.map((p) => (
+          <option key={p.value} value={p.value}>
+            {p.label}
+          </option>
+        ))}
+      </select>
 
       <label>Prompt</label>
       <textarea

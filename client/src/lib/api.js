@@ -1,8 +1,8 @@
-export async function generateImage({ apiKey, model, prompt, images, ratio, resolution }) {
+export async function generateImage({ provider, apiKey, model, prompt, images, ratio, resolution }) {
   const res = await fetch("/api/generate", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ apiKey, model, prompt, images, ratio, resolution }),
+    body: JSON.stringify({ provider, apiKey, model, prompt, images, ratio, resolution }),
   });
 
   const json = await res.json();
