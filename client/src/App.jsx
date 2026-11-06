@@ -17,7 +17,6 @@ import VWorldMapModal from "./components/VWorldMapModal.jsx";
 import ImageNode from "./nodes/ImageNode.jsx";
 import ImagineNode from "./nodes/ImagineNode.jsx";
 import CropNode from "./nodes/CropNode.jsx";
-import CanvasNode from "./nodes/CanvasNode.jsx";
 import MergeNode from "./nodes/MergeNode.jsx";
 import UpscaleNode from "./nodes/UpscaleNode.jsx";
 import VWorldNode from "./nodes/VWorldNode.jsx";
@@ -29,7 +28,6 @@ const nodeTypes = {
   image: ImageNode,
   imagine: ImagineNode,
   crop: CropNode,
-  canvas: CanvasNode,
   merge: MergeNode,
   upscale: UpscaleNode,
   vworld: VWorldNode,

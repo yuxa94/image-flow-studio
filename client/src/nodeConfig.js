@@ -50,12 +50,6 @@ export const PALETTE = [
         defaultData: () => ({ input: null, output: null, ratio: "1:1" }),
       },
       {
-        type: "canvas",
-        title: "Canvas",
-        subtitle: "Brush / pen drawing",
-        defaultData: () => ({ input: null, output: null, strokes: [] }),
-      },
-      {
         type: "merge",
         title: "Merge",
         subtitle: "Overlay multiple images",
