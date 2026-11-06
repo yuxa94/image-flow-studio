@@ -53,8 +53,10 @@ export default function ImagineNode({ id, data, selected }) {
         ratio: data.ratio && data.ratio !== "AUTO" ? data.ratio : data.baseRatio || "AUTO",
         resolution: data.resolution || "AUTO",
       });
-      // the annotated edit is a one-shot instruction — clear it once consumed
-      updateNodeData(id, { loading: false, error: null, editedImage: null });
+      // the annotated edit is a one-shot instruction — clear it once consumed.
+      // `rect` passes through from the base input so the result still knows
+      // where it belongs if the base was a positioned crop.
+      updateNodeData(id, { loading: false, error: null, editedImage: null, rect: data.baseImageRect || null });
       linkGeneratedImage(id, result.image);
     } catch (err) {
       updateNodeData(id, { loading: false, error: err.message });
@@ -81,6 +83,11 @@ export default function ImagineNode({ id, data, selected }) {
       />
 
       {data.baseRatio ? <div className="hint">캡처 비율 {data.baseRatio} · AUTO 선택 시 이 비율로 생성합니다.</div> : null}
+      {data.baseImageRect ? (
+        <div className="hint">
+          📍 원본의 일부 영역(크롭)입니다 — Merge에서 원본과 합치면 이 결과가 같은 위치에 들어갑니다.
+        </div>
+      ) : null}
 
       <div className="handle-row">
         <Handle type="target" position={Position.Left} id="ref" />

@@ -10,6 +10,7 @@ import {
 import { useStore, nextId } from "./lib/store.js";
 import { PALETTE } from "./nodeConfig.js";
 import SettingsPanel from "./SettingsPanel.jsx";
+import ProjectsPanel from "./ProjectsPanel.jsx";
 import Lightbox from "./components/Lightbox.jsx";
 import VWorldMapModal from "./components/VWorldMapModal.jsx";
 
@@ -124,6 +125,7 @@ function Canvas() {
         }}>VWorld + Imagine 시작하기</button>
         <p className="hint">왼쪽 노드를 캔버스로 드래그해 직접 구성할 수도 있습니다.</p>
       </div> : null}
+      <ProjectsPanel />
       <SettingsPanel />
     </div>
   );

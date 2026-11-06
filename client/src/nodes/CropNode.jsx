@@ -15,7 +15,10 @@ export default function CropNode({ id, data, selected }) {
     updateNodeData(id, { loading: true, error: null, ratio: ratioLabel });
     try {
       const out = await cropImage(data.input, rect);
-      updateNodeData(id, { loading: false });
+      // `rect` (position/size as % of the source image) travels downstream
+      // with the output so a later Merge can paste an edited version of this
+      // crop back into the original at the exact spot it came from.
+      updateNodeData(id, { loading: false, rect });
       setNodeOutput(id, out);
     } catch (err) {
       updateNodeData(id, { loading: false, error: err.message });
@@ -34,6 +37,13 @@ export default function CropNode({ id, data, selected }) {
 
       {data.output ? (
         <ImagePreview src={data.output} alt="cropped" downloadable filename={`crop-${id}.png`} />
+      ) : null}
+
+      {data.rect ? (
+        <div className="hint">
+          Position: {Math.round(data.rect.xPct * 100)}%, {Math.round(data.rect.yPct * 100)}% · Size:{" "}
+          {Math.round(data.rect.wPct * 100)}% × {Math.round(data.rect.hPct * 100)}%
+        </div>
       ) : null}
 
       {data.error ? <div className="error-text">{data.error}</div> : null}

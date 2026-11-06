@@ -18,6 +18,7 @@ export default function MergeNode({ id, data, selected }) {
     const layers = SLOTS.map((s) => ({
       dataUrl: data[s.field],
       opacity: data[s.opacityField] ?? 1,
+      rect: data[`${s.field}Rect`] || null,
     })).filter((l) => l.dataUrl);
 
     if (!layers.length) return;
@@ -41,6 +42,7 @@ export default function MergeNode({ id, data, selected }) {
         <div key={s.field}>
           <label>
             {s.field} {data[s.field] ? "" : "(empty)"}
+            {data[`${s.field}Rect`] ? " · 📍 positioned patch" : ""}
           </label>
           {data[s.field] ? (
             <ImagePreview src={data[s.field]} alt={s.field} style={{ aspectRatio: "16/6" }} />
@@ -57,6 +59,11 @@ export default function MergeNode({ id, data, selected }) {
           ) : null}
         </div>
       ))}
+
+      <div className="hint">
+        크롭 없이 연결한 이미지는 원본(캔버스 크기)으로 사용됩니다. 크롭 → Imagine으로 수정한 결과를 다른 슬롯에
+        연결하면 같은 위치에 patch됩니다.
+      </div>
 
       {data.output ? (
         <ImagePreview src={data.output} alt="merged" downloadable filename={`merge-${id}.png`} />

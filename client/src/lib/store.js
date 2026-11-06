@@ -49,6 +49,47 @@ function loadSettings() {
   return { ...DEFAULT_SETTINGS };
 }
 
+// Saved projects: a name + full nodes/edges snapshot, keyed by id. The
+// currently open one is auto-saved on every change so a page refresh never
+// loses work; "Save as" / "Import" create additional named entries.
+const PROJECTS_KEY = "image-flow-studio:projects";
+const CURRENT_PROJECT_KEY = "image-flow-studio:currentProjectId";
+
+function loadProjects() {
+  try {
+    const raw = localStorage.getItem(PROJECTS_KEY);
+    if (raw) return JSON.parse(raw);
+  } catch {
+    // ignore
+  }
+  return {};
+}
+
+function persistProjects(projects) {
+  try {
+    localStorage.setItem(PROJECTS_KEY, JSON.stringify(projects));
+  } catch {
+    // storage full or disabled — saved projects just won't survive a refresh
+  }
+}
+
+function loadCurrentProjectId() {
+  try {
+    return localStorage.getItem(CURRENT_PROJECT_KEY) || null;
+  } catch {
+    return null;
+  }
+}
+
+function persistCurrentProjectId(id) {
+  try {
+    if (id) localStorage.setItem(CURRENT_PROJECT_KEY, id);
+    else localStorage.removeItem(CURRENT_PROJECT_KEY);
+  } catch {
+    // ignore
+  }
+}
+
 let idCounter = 1;
 export function nextId(prefix) {
   return `${prefix}-${idCounter++}-${Math.floor(Math.random() * 1e6)}`;
@@ -93,6 +134,10 @@ function syncInputs(nodes, edges, previousEdges = edges) {
         node.data.baseRatio = image ? source?.data.captureRatio || null : null;
       }
       node.data[field] = image;
+      // Carries the source's crop region (if any) alongside its image, e.g.
+      // `baseRect`/`input1Rect`, so a later Merge can paste a patch back at
+      // the exact spot it was cropped from instead of stretching it.
+      node.data[`${field}Rect`] = image ? source?.data.rect || null : null;
     }
   }
   nodes.forEach(n => visit(n.id));
@@ -101,11 +146,21 @@ function syncInputs(nodes, edges, previousEdges = edges) {
 
 const hotState = import.meta.hot ? window.__imageFlowStore?.getState() : null;
 
+// With no hot-reload state (i.e. a real page load), restore whatever project
+// was open last so refreshing the browser doesn't wipe the canvas.
+const initialProjects = loadProjects();
+const initialProjectId = loadCurrentProjectId();
+const restoredProject = !hotState && initialProjectId ? initialProjects[initialProjectId] : null;
+
 export const useStore = create((set, get) => ({
   settings: loadSettings(),
-  nodes: hotState?.nodes || [],
-  edges: hotState?.generationLinksVersion === 1 ? hotState.edges : addGenerationLinks(hotState?.nodes || [], hotState?.edges || []),
+  nodes: hotState?.nodes || restoredProject?.nodes || [],
+  edges: hotState
+    ? (hotState.generationLinksVersion === 1 ? hotState.edges : addGenerationLinks(hotState.nodes || [], hotState.edges || []))
+    : restoredProject?.edges || [],
   generationLinksVersion: 1,
+  projects: initialProjects,
+  currentProjectId: restoredProject ? initialProjectId : null,
   lightboxImage: null,
 
   openLightbox: (image) => set({ lightboxImage: image }),
@@ -244,7 +299,7 @@ export const useStore = create((set, get) => ({
 
     const newId = nextId('image');
     const newNode = { id: newId, type: 'image', position,
-      data: { image, generatedFrom: sourceId, generationIndex } };
+      data: { image, generatedFrom: sourceId, generationIndex, rect: source.data.rect || null } };
     const nextNodes = nodes.map(n => {
       if (n.id === sourceId) return { ...n, data: { ...n.data, output: image,
         generationCount: generationIndex, linkedImageNodeId: null } };
@@ -259,4 +314,89 @@ export const useStore = create((set, get) => ({
   },
 
   removeNode: (id) => get().onNodesChange([{ type: 'remove', id }]),
+
+  renameProject: (id, name) => {
+    const { projects } = get();
+    if (!projects[id] || !name) return;
+    const next = { ...projects, [id]: { ...projects[id], name } };
+    persistProjects(next);
+    set({ projects: next });
+  },
+
+  // Saves the current canvas as a brand-new named project and makes it the
+  // open one. Saving over an existing one happens automatically as you work.
+  saveProjectAs: (name) => {
+    const { nodes, edges, projects } = get();
+    const id = nextId('project');
+    const next = { ...projects, [id]: { id, name: name || '제목 없음', savedAt: Date.now(), nodes, edges } };
+    persistProjects(next);
+    persistCurrentProjectId(id);
+    set({ projects: next, currentProjectId: id });
+    return id;
+  },
+
+  loadProject: (id) => {
+    const entry = get().projects[id];
+    if (!entry) return;
+    persistCurrentProjectId(id);
+    set({ nodes: entry.nodes, edges: entry.edges, currentProjectId: id });
+  },
+
+  deleteProject: (id) => {
+    const projects = { ...get().projects };
+    delete projects[id];
+    persistProjects(projects);
+    if (get().currentProjectId === id) {
+      persistCurrentProjectId(null);
+      set({ projects, currentProjectId: null });
+    } else {
+      set({ projects });
+    }
+  },
+
+  newProject: () => {
+    persistCurrentProjectId(null);
+    set({ nodes: [], edges: [], currentProjectId: null });
+  },
+
+  exportProject: () => {
+    const { nodes, edges, projects, currentProjectId } = get();
+    const name = projects[currentProjectId]?.name || 'image-flow-project';
+    return { filename: `${name}.flow.json`, json: JSON.stringify({ version: 1, name, nodes, edges }, null, 2) };
+  },
+
+  // A loaded file becomes its own new project rather than overwriting
+  // whatever was already open.
+  importProjectData: (parsed) => {
+    const id = nextId('project');
+    const entry = { id, name: parsed?.name || 'Imported', savedAt: Date.now(),
+      nodes: parsed?.nodes || [], edges: parsed?.edges || [] };
+    const next = { ...get().projects, [id]: entry };
+    persistProjects(next);
+    persistCurrentProjectId(id);
+    set({ projects: next, nodes: entry.nodes, edges: entry.edges, currentProjectId: id });
+  },
 }));
+
+// Auto-save: whenever the open project's nodes/edges actually change,
+// persist them under its id (creating an untitled one on the first edit) so
+// work is never lost to a refresh. Comparing by reference and skipping runs
+// that don't touch nodes/edges keeps this from looping on its own writes.
+let autosaveTimer = null;
+let lastAutosavedNodes = useStore.getState().nodes;
+let lastAutosavedEdges = useStore.getState().edges;
+useStore.subscribe((state) => {
+  if (state.nodes === lastAutosavedNodes && state.edges === lastAutosavedEdges) return;
+  lastAutosavedNodes = state.nodes;
+  lastAutosavedEdges = state.edges;
+  clearTimeout(autosaveTimer);
+  autosaveTimer = setTimeout(() => {
+    const { nodes, edges, projects, currentProjectId } = useStore.getState();
+    const id = currentProjectId && projects[currentProjectId] ? currentProjectId : nextId('project');
+    const name = projects[id]?.name || '제목 없음';
+    const next = { ...projects, [id]: { id, name, savedAt: Date.now(), nodes, edges } };
+    persistProjects(next);
+    persistCurrentProjectId(id);
+    useStore.setState({ projects: next, currentProjectId: id });
+  }, 800);
+});
