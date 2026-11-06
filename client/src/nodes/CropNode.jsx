@@ -18,7 +18,12 @@ export default function CropNode({ id, data, selected }) {
       // `rect` (position/size as % of the source image) travels downstream
       // with the output so a later Merge can paste an edited version of this
       // crop back into the original at the exact spot it came from.
-      updateNodeData(id, { loading: false, rect });
+      // `captureRatio` is the same field VWorld uses to tell a downstream
+      // Imagine node what aspect ratio to generate at when its own Ratio is
+      // left on AUTO — without it, an AUTO-ratio generation could come back
+      // a different shape than the crop, which then gets stretched to fit
+      // the patch rect on Merge instead of lining up cleanly.
+      updateNodeData(id, { loading: false, rect, captureRatio: ratioLabel });
       setNodeOutput(id, out);
     } catch (err) {
       updateNodeData(id, { loading: false, error: err.message });
