@@ -20,6 +20,7 @@ import CropNode from "./nodes/CropNode.jsx";
 import CanvasNode from "./nodes/CanvasNode.jsx";
 import MergeNode from "./nodes/MergeNode.jsx";
 import UpscaleNode from "./nodes/UpscaleNode.jsx";
+import AdjustNode from "./nodes/AdjustNode.jsx";
 import VWorldNode from "./nodes/VWorldNode.jsx";
 
 // Keep the current canvas available across store hot updates in development.
@@ -32,6 +33,7 @@ const nodeTypes = {
   canvas: CanvasNode,
   merge: MergeNode,
   upscale: UpscaleNode,
+  adjust: AdjustNode,
   vworld: VWorldNode,
 };
 

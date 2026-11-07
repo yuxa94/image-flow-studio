@@ -1248,3 +1248,66 @@ button:focus-visible, select:focus-visible, input:focus-visible, textarea:focus-
   .vworld-footer { padding: 8px; gap: 8px; }
   .vworld-fov { width: 100%; }
 }
+
+/* Adjust node */
+.adjust-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-top: 4px;
+  border-top: 1px solid var(--border);
+}
+
+.adjust-group-title {
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.adjust-slider {
+  display: flex;
+  flex-direction: column;
+}
+
+.adjust-slider-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 11px;
+  color: var(--text);
+}
+
+.adjust-slider input[type="range"],
+.adjust-toggle input {
+  width: 100%;
+  accent-color: var(--accent);
+}
+
+.adjust-value {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.adjust-value.changed {
+  color: var(--accent);
+}
+
+.adjust-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  cursor: pointer;
+  border-top: 1px solid var(--border);
+  padding-top: 6px;
+}
+
+.adjust-toggle input {
+  width: auto;
+}

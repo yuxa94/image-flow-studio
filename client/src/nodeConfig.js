@@ -50,6 +50,12 @@ export const PALETTE = [
         defaultData: () => ({ input: null, output: null, ratio: "1:1" }),
       },
       {
+        type: "adjust",
+        title: "Adjust",
+        subtitle: "Exposure / color / invert",
+        defaultData: () => ({ input: null, output: null, adjustments: {} }),
+      },
+      {
         type: "canvas",
         title: "Canvas",
         subtitle: "Brush / pen drawing",

@@ -76,6 +76,11 @@ REPLICATE_API_TOKEN=
   (rectangle/brush, adjustable stroke width) before generating.
 - **Crop** — opens a ratio-locked crop modal (1:1 through 21:9 presets,
   drag-to-move, corner-handle resize), Apply.
+- **Adjust** — Photoshop-style tone/color sliders: exposure (EV),
+  brightness, contrast, highlights, shadows, saturation, vibrance, hue,
+  temperature, tint, plus an Invert toggle. Changes apply live (a small
+  preview while dragging, then the full-resolution result is pushed
+  downstream); click a value or double-click a slider to reset it.
 - **Merge** — overlay up to 3 images with per-layer opacity sliders.
 - **Upscale** — "Fast (local)" does a canvas upscale; "AI (Gemini)" asks the
   model to enhance detail at higher resolution.
