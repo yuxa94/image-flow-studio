@@ -81,6 +81,9 @@ REPLICATE_API_TOKEN=
   temperature, tint, plus an Invert toggle. Changes apply live (a small
   preview while dragging, then the full-resolution result is pushed
   downstream); click a value or double-click a slider to reset it.
+  Clicking the preview (or "⤢ 크게 조절") opens an enlarged workspace with
+  a big live preview, the same sliders, a hold-to-compare-original button,
+  and 취소 (restore the settings it opened with) / 완료.
 - **Merge** — overlay up to 3 images with per-layer opacity sliders.
 - **Upscale** — "Fast (local)" does a canvas upscale; "AI (Gemini)" asks the
   model to enhance detail at higher resolution.

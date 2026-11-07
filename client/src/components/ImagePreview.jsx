@@ -1,7 +1,9 @@
 import { useStore } from "../lib/store.js";
 import { downloadDataUrl } from "../lib/imageUtils.js";
 
-export default function ImagePreview({ src, alt = "image", empty, downloadable = false, filename = "image.png", style }) {
+// `onOpen` replaces the default click behavior (the plain lightbox), e.g. so
+// the Adjust node can open its own enlarged editor instead.
+export default function ImagePreview({ src, alt = "image", empty, downloadable = false, filename = "image.png", style, onOpen }) {
   const openLightbox = useStore((s) => s.openLightbox);
 
   if (!src) {
@@ -13,7 +15,7 @@ export default function ImagePreview({ src, alt = "image", empty, downloadable =
   }
 
   return (
-    <div className="image-preview" style={style} onClick={() => openLightbox(src)}>
+    <div className="image-preview" style={style} onClick={() => (onOpen ? onOpen() : openLightbox(src))}>
       <img src={src} alt={alt} />
       {downloadable ? (
         <button

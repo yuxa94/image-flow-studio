@@ -1311,3 +1311,31 @@ button:focus-visible, select:focus-visible, input:focus-visible, textarea:focus-
 .adjust-toggle input {
   width: auto;
 }
+
+/* Adjust modal (enlarged Adjust workspace) */
+.adjust-modal-body {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 1fr 300px;
+  min-height: 0;
+}
+
+.adjust-modal-image {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  user-select: none;
+}
+
+.adjust-modal-hint {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text-dim);
+}
+
+@media (max-width: 720px) {
+  .adjust-modal-body {
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(200px, 45%) 1fr;
+  }
+}
