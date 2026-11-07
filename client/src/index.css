@@ -753,6 +753,85 @@ input.node-input {
   width: 100%;
 }
 
+/* Prompt library (Imagine node) */
+.prompt-library {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.prompt-library-toggle,
+.prompt-library-save {
+  width: 100%;
+  text-align: left;
+  font-weight: 500;
+}
+
+.prompt-library-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.prompt-library-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+.prompt-library-list li {
+  display: flex;
+  align-items: stretch;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.prompt-library-list li.active {
+  border-color: var(--accent);
+}
+
+.prompt-library-item {
+  flex: 1;
+  background: transparent;
+  border: none;
+  color: var(--text);
+  text-align: left;
+  font-size: 12px;
+  font-family: inherit;
+  padding: 6px 8px;
+  cursor: pointer;
+  white-space: normal;
+  word-break: keep-all;
+}
+
+.prompt-library-item:hover {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.prompt-library-delete {
+  background: transparent;
+  border: none;
+  border-left: 1px solid var(--border);
+  color: var(--text-dim);
+  padding: 0 8px;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.prompt-library-delete:hover {
+  color: var(--danger);
+}
+
 /* Merge workspace */
 .editcanvas-canvas.merge-stage {
   overflow: hidden;

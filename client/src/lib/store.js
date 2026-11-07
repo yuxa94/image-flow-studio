@@ -49,6 +49,35 @@ function loadSettings() {
   return { ...DEFAULT_SETTINGS };
 }
 
+// Prompt library: frequently used Imagine prompts, shared across all nodes
+// and projects, kept in this browser's localStorage.
+const PROMPT_LIBRARY_KEY = "image-flow-studio:promptLibrary";
+
+const DEFAULT_PROMPT_LIBRARY = [
+  { id: "default-facade-style", text: "베이스 이미지에 레퍼런스 이미지 파사드 스타일 적용" },
+];
+
+function loadPromptLibrary() {
+  try {
+    const raw = localStorage.getItem(PROMPT_LIBRARY_KEY);
+    if (raw) {
+      const list = JSON.parse(raw);
+      if (Array.isArray(list)) return list.filter((p) => p && typeof p.text === "string");
+    }
+  } catch {
+    // ignore
+  }
+  return [...DEFAULT_PROMPT_LIBRARY];
+}
+
+function persistPromptLibrary(list) {
+  try {
+    localStorage.setItem(PROMPT_LIBRARY_KEY, JSON.stringify(list));
+  } catch {
+    // ignore
+  }
+}
+
 // Saved projects: a name + full nodes/edges snapshot, keyed by id. The
 // currently open one is auto-saved on every change so a page refresh never
 // loses work; "Save as" / "Import" create additional named entries.
@@ -173,6 +202,22 @@ export const useStore = create((set, get) => ({
   vworldTargetNodeId: null,
   openVWorldMap: (nodeId) => set({ vworldOpen: true, vworldTargetNodeId: nodeId }),
   closeVWorldMap: () => set({ vworldOpen: false }),
+
+  promptLibrary: loadPromptLibrary(),
+  addPrompt: (text) => {
+    const trimmed = (text || "").trim();
+    if (!trimmed) return;
+    const list = get().promptLibrary;
+    if (list.some((p) => p.text === trimmed)) return;
+    const next = [...list, { id: `prompt-${Date.now().toString(36)}`, text: trimmed }];
+    set({ promptLibrary: next });
+    persistPromptLibrary(next);
+  },
+  removePrompt: (promptId) => {
+    const next = get().promptLibrary.filter((p) => p.id !== promptId);
+    set({ promptLibrary: next });
+    persistPromptLibrary(next);
+  },
 
   setSettings: (patch) => {
     const next = { ...get().settings, ...patch };

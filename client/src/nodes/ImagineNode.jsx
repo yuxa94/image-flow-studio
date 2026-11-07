@@ -6,6 +6,7 @@ import { generateImage } from "../lib/api.js";
 import { dataUrlToRaw } from "../lib/imageUtils.js";
 import ImagePreview from "../components/ImagePreview.jsx";
 import EditCanvasModal from "../components/EditCanvasModal.jsx";
+import PromptLibrary from "../components/PromptLibrary.jsx";
 import { ASPECT_RATIO_LABELS } from "../lib/ratios.js";
 
 const RATIOS = ["AUTO", ...ASPECT_RATIO_LABELS];
@@ -125,6 +126,7 @@ export default function ImagineNode({ id, data, selected }) {
       </select>
 
       <label>Prompt</label>
+      <PromptLibrary currentPrompt={data.prompt} onSelect={(text) => updateNodeData(id, { prompt: text })} />
       <textarea
         className="node-textarea"
         placeholder="Describe the edit or image to generate..."

@@ -69,7 +69,10 @@ REPLICATE_API_TOKEN=
   the same building stayed hidden.
 - **Imagine** — the Gemini node. Connect a base image (required) and
   optionally a reference image, write a prompt, pick ratio/resolution, hit
-  Generate. The "Edit" button opens a canvas to mark up the image
+  Generate. "📚 프롬프트 라이브러리" above the prompt box lists saved
+  prompts (click one to fill the prompt, × to delete, "현재 프롬프트 저장"
+  to add the current one); the library is shared by all Imagine nodes and
+  kept in the browser's localStorage. The "Edit" button opens a canvas to mark up the image
   (rectangle/brush, adjustable stroke width) before generating.
 - **Crop** — opens a ratio-locked crop modal (1:1 through 21:9 presets,
   drag-to-move, corner-handle resize), Apply.
